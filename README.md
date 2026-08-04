@@ -38,7 +38,7 @@ Os pontos que mais mudam como trabalho com o Claude:
 
 ## Statusline
 
-Statusline em 4 linhas (Node puro, zero dependência):
+Statusline em 4-5 linhas (Node puro, zero dependência):
 
 ![Statusline em ação](docs/statusline.png)
 
@@ -50,12 +50,15 @@ Claude │ context ████░░░░ 42% 420k/1M │ 5h ███░░�
 Codex │ (uso semanal) ░░░░░░░ 3% reseta em 6d23h
 ────────────────────────────────────────────────────
 meu-repo │ ⎇ main │ ⌂ (principal) │ ✎ 2 files
+────────────────────────────────────────────────────
+dev server ⚡ :8081
 ```
 
 - Barra de contexto/5h/7d com **gradiente verde→amarelo→vermelho** em degraus de 10% (truecolor).
 - Linha do **Codex** lê o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s. **Opcional** — sem o Codex CLI instalado (sem `~/.codex/sessions/`), a linha aparece mesmo assim, só mostra "sem dados" em vez de quebrar.
 - **Custo em BRL** ao lado do USD nativo — cotação via [open.er-api.com](https://www.exchangerate-api.com/docs/free) (sem chave), cache de 12h em disco, fallback fixo se offline.
 - Linhas de Codex e git **só aparecem dentro de um repo** (`git rev-parse --is-inside-work-tree`) — fora de um checkout, mostra só Claude + modelo/custo/duração.
+- **Linha de dev server é condicional** — só aparece quando há um `npm run dev` (vite) rodando *neste checkout especifico* (principal ou worktree, cada um mostra só a própria porta). Detecta perguntando ao SO qual processo `node` escutando TCP tem `cwd` exatamente igual ao toplevel deste checkout e linha de comando contendo `vite` (evita falso-positivo com outro processo node solto na mesma pasta). Sem dev server rodando ali, a linha some.
 
 ## RTK - Rust Token Killer
 

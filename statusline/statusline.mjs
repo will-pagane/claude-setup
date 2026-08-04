@@ -4,6 +4,8 @@
 // Linha 2: modelo (laranja) · custo USD · custo BRL · duracao
 // Linha 3: "Codex" (azul fixo) · uso semanal (explicativo, barra branca)
 // Linha 4: repo · branch · worktree · files do checkout
+// Linha 5: porta do dev server (npm run dev / vite) deste checkout especifico
+//          — so aparece quando ha um rodando, senao a linha some
 // Uma regua fina separa cada linha, inclusive depois da ultima.
 // Sem badge caveman (modo caveman segue ativo via hook + flag .caveman-active).
 //
@@ -46,6 +48,7 @@ const COL = {
   branch: 141, // roxo
   worktree: 108, // verde-cinza
   files: 179, // areia
+  port: 214, // laranja-claro
   cost: 150, // verde-claro (USD)
   costBrl: 114, // verde-azulado (BRL)
   dur: 109, // azul-piscina
@@ -119,6 +122,47 @@ function sh(cmd, cwd) {
   } catch {
     return "";
   }
+}
+
+// Porta(s) do dev server (`npm run dev` -> vite) deste checkout especifico
+// (principal ou worktree). Sem registro estatico de porta por worktree
+// (vite.config fixa 8080 e autoincrementa se ocupada), entao a unica fonte
+// confiavel e perguntar ao SO: processo `node` escutando TCP, com cwd exato
+// igual ao toplevel deste checkout, E linha de comando contendo "vite" —
+// so cwd bateria com qualquer processo node solto na mesma pasta (ex.: o
+// live-server do Impeccable), entao o filtro de comando evita falso-positivo.
+function devPortSeg(cwd, top) {
+  if (!top) return null;
+  const raw = sh("lsof -a -nP -iTCP -sTCP:LISTEN -c node -Fpn", cwd);
+  if (!raw) return null;
+  const portsByPid = {};
+  let pid = null;
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("p")) pid = line.slice(1);
+    else if (line.startsWith("n") && pid) {
+      const mm = line.match(/:(\d+)$/);
+      if (mm) (portsByPid[pid] ??= new Set()).add(mm[1]);
+    }
+  }
+  // Mais de um processo pode ter cwd == toplevel (ex.: dev server orfao de
+  // sessao anterior que nunca foi morto) — junta todas as portas casadas em
+  // vez de retornar so a primeira, pra isso ficar visivel em vez de escondido.
+  const matched = new Set();
+  for (const candidatePid of Object.keys(portsByPid)) {
+    if (!/^\d+$/.test(candidatePid)) continue;
+    const cwdOut = sh(`lsof -a -p ${candidatePid} -d cwd -Fn`, cwd);
+    const dirLine = cwdOut.split("\n").find((l) => l.startsWith("n"));
+    const dir = dirLine ? dirLine.slice(1) : "";
+    // match exato, nao prefixo: um worktree linked vive fisicamente dentro
+    // de .claude/worktrees/ do checkout principal, entao startsWith(top+"/")
+    // faria a porta de um worktree vazar pro checkout principal.
+    if (dir !== top) continue;
+    const command = sh(`ps -o command= -p ${candidatePid}`, cwd);
+    if (!/vite/i.test(command)) continue;
+    for (const p of portsByPid[candidatePid]) matched.add(p);
+  }
+  if (matched.size === 0) return null;
+  return [...matched].sort((a, b) => a - b).join(",");
 }
 
 // ---------- ler stdin ----------
@@ -311,6 +355,7 @@ function codexSeg() {
 // junto (agrupadas como "contexto de repo").
 let line3 = null;
 let line4 = null;
+let line5 = null;
 
 if (inRepo) {
   line3 = codexSeg();
@@ -347,10 +392,22 @@ if (inRepo) {
   const segFiles = `${c(filesColor)}✎ ${nFiles} ${nFiles === 1 ? "file" : "files"}${RESET}`;
 
   line4 = [segRepo, segBranch, segWt, segFiles].join(`  ${sep}  `);
+
+  // ---------- LINHA 5 (porta do npm run dev deste checkout, se houver) ----------
+  const top = sh("git rev-parse --show-toplevel", cwd);
+  const port = devPortSeg(cwd, top);
+  if (port) {
+    line5 = `${dim}dev server${RESET}  ${c(COL.port)}⚡ :${port}${RESET}`;
+  }
 }
 
 // ---------- output ----------
 const R = rule();
 const lines = [line1, line2];
-if (inRepo) lines.push(line3, line4);
-process.stdout.write(lines.map((l) => l + "\n" + R).join("\n"));
+if (inRepo) lines.push(line3, line4, line5);
+process.stdout.write(
+  lines
+    .filter(Boolean)
+    .map((l) => l + "\n" + R)
+    .join("\n")
+);
