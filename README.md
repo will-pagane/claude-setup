@@ -40,6 +40,8 @@ Os pontos que mais mudam como trabalho com o Claude:
 
 Statusline em 4 linhas (Node puro, zero dependência):
 
+![Statusline em ação](docs/statusline.png)
+
 ```
 Claude │ context ████░░░░ 42% 420k/1M │ 5h ███░░░░ 29% ↺2h │ 7d ███░░░░ 30% ↺5d
 ────────────────────────────────────────────────────
