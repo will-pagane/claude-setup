@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fenix statusline — custom multi-linha para Claude Code.
 // Linha 1: "Claude" (laranja) · Context(barra+tokens) · Sessao 5h · Sessao 7d
-// Linha 2: modelo (laranja) · custo USD · custo BRL · duracao
+// Linha 2: modelo (laranja) · custo "$USD - R$BRL" · duracao (ativo/total) · ritmo (fogo 1-3x vs media historica)
 // Linha 3: "Codex" (azul fixo) · uso semanal (explicativo, barra branca)
 // Linha 4: repo · branch · worktree · files do checkout
 // Linha 5: porta do dev server (npm run dev / vite) deste checkout especifico
@@ -215,20 +215,39 @@ const seg7d = usageSeg("7d", COL.d7, J?.rate_limits?.seven_day);
 
 const line1 = [segClaude, segCtx, seg5h, seg7d].join(`  ${sep}  `);
 
-// ---------- LINHA 2 (modelo · custo USD · custo BRL · duracao) ----------
+// ---------- LINHA 2 (modelo · custo "$USD - R$BRL" · duracao ativo/total) ----------
 const modelName = J?.model?.display_name || J?.model?.id || "?";
 const segModelName = `${bold}${c(COL.claude)}◆ ${modelName}${RESET}`;
 
 const costUsd = J?.cost?.total_cost_usd;
 const durMs = J?.cost?.total_duration_ms;
-const segCost =
-  costUsd != null
-    ? `${dim}custo${RESET} ${c(COL.cost)}$${costUsd.toFixed(2)}${RESET}`
-    : `${dim}custo${RESET} ${dim}—${RESET}`;
+
+// Tempo ativo = soma de todo evento "turn_duration" no transcript da sessao,
+// SEM filtrar isSidechain — inclui turnos rodados por subagentes (Task/Agent),
+// nao so o loop principal. cost.total_api_duration_ms conta so o loop
+// principal, por isso nao serve mais aqui; fica so como fallback se o
+// transcript nao existir/nao tiver essas entradas ainda.
+function computeActiveMs() {
+  const transcriptPath = J?.transcript_path;
+  if (transcriptPath && fs.existsSync(transcriptPath)) {
+    const out = sh(
+      `grep -F '"subtype":"turn_duration"' "${transcriptPath}" | grep -oE '"durationMs":[0-9]+' | awk -F: '{s+=$2} END {print s+0}'`
+    );
+    const sum = Number(out);
+    if (sum > 0) return sum;
+  }
+  return J?.cost?.total_api_duration_ms ?? null;
+}
+const activeMs = computeActiveMs();
+
 const segDur =
   durMs != null
-    ? `${dim}duracao${RESET} ${c(COL.dur)}${fmtDur(durMs / 1000)}${RESET}`
-    : `${dim}duracao${RESET} ${dim}—${RESET}`;
+    ? `${c(COL.dur)}⏱ ${
+        activeMs != null
+          ? `${fmtDur(activeMs / 1000)} ativo / ${fmtDur(durMs / 1000)} total`
+          : fmtDur(durMs / 1000)
+      }${RESET}`
+    : `${dim}⏱ —${RESET}`;
 
 // Cotacao USD->BRL, cache 12h em disco (open.er-api.com, sem chave, gratuito)
 function usdToBrlRate() {
@@ -264,16 +283,140 @@ function usdToBrlRate() {
   return { rate: FALLBACK, stale: true };
 }
 
-const segCostBrl = (() => {
-  if (costUsd == null) return `${dim}brl${RESET} ${dim}—${RESET}`;
+const segCost = (() => {
+  if (costUsd == null) return `${dim}custo${RESET} ${dim}—${RESET}`;
   const { rate, stale } = usdToBrlRate();
   const brl = (costUsd * rate).toFixed(2);
-  return `${dim}brl${RESET} ${c(COL.costBrl)}R$${brl}${RESET}${
-    stale ? ` ${dim}~${RESET}` : ""
-  }`;
+  return (
+    `${dim}custo${RESET} ${c(COL.cost)}$${costUsd.toFixed(2)}${RESET}` +
+    `${dim} - ${RESET}` +
+    `${c(COL.costBrl)}R$${brl}${RESET}${stale ? ` ${dim}~${RESET}` : ""}`
+  );
 })();
 
-const line2 = [segModelName, segCost, segCostBrl, segDur].join(`  ${sep}  `);
+// Ritmo de burn: tokens de contexto acumulados por minuto ativo — nao custo.
+// Dois sinais combinados, o maior vence:
+//   1) ratio vs media historica (tokens/min desta sessao / tokens/min medio
+//      de outras sessoes) — log local em jsonl, uma linha por sessao (upsert
+//      por session_id), podado pra 30 dias / 500 sessoes a cada escrita.
+//      So entra em jogo com >=3 sessoes historicas de >=1min ativo, senao
+//      baseline fraca vira ruido.
+//   2) piso pelo % de contexto cheio (ctxPct) — sobe o fogo mesmo sem
+//      historico, porque contexto quase estourando e um risco por si so
+//      (compact iminente), independente do ritmo estar "normal".
+// Precisa de >=30s ativo na sessao atual pra qualquer leitura fazer sentido.
+function burnPaceSeg() {
+  const sessionId = J?.session_id;
+  if (!sessionId || activeMs == null || activeMs < 30000) return null;
+  if (!ctxSize) return null; // sem tamanho de janela nao da pra medir % cheio
+
+  const logFile = path.join(HOME, ".claude", "statusline", ".burn-log.jsonl");
+  const now = Date.now();
+  const map = new Map();
+  try {
+    const raw = fs.readFileSync(logFile, "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const rec = JSON.parse(line);
+        if (rec?.session_id) map.set(rec.session_id, rec);
+      } catch {}
+    }
+  } catch {}
+
+  // Ritmo marginal (delta desde o ultimo render deste MESMO session_id) com
+  // suavizacao EMA — pro ETA de handoff usar o ritmo RECENTE, nao a media
+  // desde o inicio da sessao. Media-desde-o-inicio conflita a carga fixa e
+  // unica de contexto (system prompt + CLAUDE.md, que entra de uma vez logo
+  // no primeiro turno) com o crescimento real por turno: sessao jovem tem
+  // essa carga ainda "concentrada" no denominador pequeno de tempo ativo, o
+  // que infla a taxa e encolhe o ETA — mesmo tendo mais espaco livre que uma
+  // sessao antiga que ja diluiu aquele pico inicial ao longo de horas.
+  const prevRec = map.get(sessionId) || null;
+  const MIN_DELTA_ACTIVE_MS = 20000; // exige >=20s ativo novo pra amostrar de novo
+  let rateEma = prevRec?.rate_ema ?? null;
+  if (prevRec) {
+    const deltaTokens = ctxTok - (prevRec.tokens ?? ctxTok);
+    const deltaActiveMs = activeMs - (prevRec.active_ms ?? activeMs);
+    // deltaTokens < 0 acontece apos /compact (contexto encolheu) — pula a
+    // amostra em vez de deixar isso virar um "ritmo negativo".
+    if (deltaTokens >= 0 && deltaActiveMs >= MIN_DELTA_ACTIVE_MS) {
+      const instRate = deltaTokens / (deltaActiveMs / 60000);
+      rateEma = rateEma == null ? instRate : 0.3 * instRate + 0.7 * rateEma;
+    }
+  }
+  if (rateEma == null) {
+    // primeiro render da sessao, sem delta ainda pra medir — usa a media
+    // acumulada soh como semente inicial; a partir do proximo render o EMA
+    // marginal assume e corrige o vies.
+    rateEma = activeMs > 0 ? ctxTok / (activeMs / 60000) : 0;
+  }
+
+  map.set(sessionId, {
+    session_id: sessionId,
+    tokens: ctxTok,
+    active_ms: activeMs,
+    rate_ema: rateEma,
+    ts: now,
+  });
+
+  const CUTOFF_MS = 30 * 86400000;
+  let entries = [...map.values()].filter((r) => now - (r.ts || 0) < CUTOFF_MS);
+  entries.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  entries = entries.slice(0, 500);
+  try {
+    fs.writeFileSync(
+      logFile,
+      entries.map((r) => JSON.stringify(r)).join("\n") + "\n"
+    );
+  } catch {}
+
+  const currentRate = ctxTok / (activeMs / 60000); // tokens/min ativo, media desde o inicio — so pro ritmo vs historico de OUTRAS sessoes (onde media-desde-o-inicio e a comparacao correta e justa)
+
+  // Ritmo vs media historica de outras sessoes — informativo, NAO decide o
+  // fogo sozinho. Contexto 16% cheio com ritmo 3.9x historico chegava a
+  // mostrar 4/5 fogos (bug reportado): ritmo rapido != urgencia de handoff
+  // quando ainda sobra quase toda a janela. Fogo fica ancorado no %
+  // contexto; ritmo so modula +-1 em cima disso.
+  const baseline = entries.filter(
+    (r) =>
+      r.session_id !== sessionId &&
+      r.tokens != null &&
+      (r.active_ms || 0) >= 60000
+  );
+  let ratio = null;
+  if (baseline.length >= 3) {
+    const sumTokens = baseline.reduce((s, r) => s + r.tokens, 0);
+    const sumActiveMin = baseline.reduce((s, r) => s + r.active_ms / 60000, 0);
+    const baselineRate = sumActiveMin > 0 ? sumTokens / sumActiveMin : 0;
+    if (baselineRate > 0) ratio = currentRate / baselineRate;
+  }
+
+  let fires =
+    ctxPct >= 90 ? 5 : ctxPct >= 75 ? 4 : ctxPct >= 55 ? 3 : ctxPct >= 35 ? 2 : 1;
+  if (ratio != null) {
+    if (ratio >= 2.0) fires = Math.min(5, fires + 1);
+    else if (ratio <= 0.5) fires = Math.max(1, fires - 1);
+  }
+
+  // Label = ETA de handoff no ritmo marginal (rateEma), sempre — o numero
+  // acionavel que decide "quando fazer handoff", nunca um % ja repetido na
+  // linha 1. Anota o ritmo vs historico so quando notavelmente rapido.
+  const remaining = Math.max(0, ctxSize - ctxTok);
+  let label =
+    rateEma > 0
+      ? `~${fmtDur((remaining / rateEma) * 60)} p/ handoff`
+      : `handoff`;
+  if (ratio != null && ratio >= 1.5) label += ` (${ratio.toFixed(1)}x ritmo)`;
+
+  return `${pctColorSeq(fires * 20)}${"🔥".repeat(fires)} ${label}${RESET}`;
+}
+
+const segPace = burnPaceSeg();
+
+const line2 = [segModelName, segCost, segDur, segPace]
+  .filter(Boolean)
+  .join(`  ${sep}  `);
 
 // ---------- LINHA 3 ("Codex" · uso semanal) ----------
 
