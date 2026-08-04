@@ -2,6 +2,8 @@
 
 Minha configuração pessoal do [Claude Code](https://claude.com/claude-code) — CLAUDE.md global, statusline custom, skills próprias, e a stack de plugins de terceiro que uso todo dia.
 
+Testado com Claude Code **2.1.221+**. O `statusline.mjs` lê campos do stdin (`rate_limits`, `cost.total_duration_ms`) que são relativamente recentes — em versão bem mais antiga alguns campos podem faltar, o script já trata isso com fallback `—` em vez de quebrar.
+
 ## O que tem aqui
 
 | Caminho | O que é |
@@ -49,7 +51,7 @@ meu-repo │ ⎇ main │ ⌂ (principal) │ ✎ 2 files
 ```
 
 - Barra de contexto/5h/7d com **gradiente verde→amarelo→vermelho** em degraus de 10% (truecolor).
-- Linha do **Codex** lê o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s.
+- Linha do **Codex** lê o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s. **Opcional** — sem o Codex CLI instalado (sem `~/.codex/sessions/`), a linha aparece mesmo assim, só mostra "sem dados" em vez de quebrar.
 - **Custo em BRL** ao lado do USD nativo — cotação via [open.er-api.com](https://www.exchangerate-api.com/docs/free) (sem chave), cache de 12h em disco, fallback fixo se offline.
 - Linhas de Codex e git **só aparecem dentro de um repo** (`git rev-parse --is-inside-work-tree`) — fora de um checkout, mostra só Claude + modelo/custo/duração.
 

@@ -1,0 +1,38 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: statusline.mjs parses
+        run: node --check statusline/statusline.mjs
+
+      - name: install.sh parses
+        run: bash -n install.sh
+
+      - name: settings.example.json is valid JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('settings.example.json','utf8'))"
+
+      - name: skills/**/*.js and *.mjs parse
+        run: |
+          find skills -name '*.js' -o -name '*.mjs' | while read -r f; do
+            echo "checking $f"
+            node --check "$f"
+          done
+
+      - name: skills/**/*.sh parse
+        run: |
+          find skills -name '*.sh' | while read -r f; do
+            echo "checking $f"
+            bash -n "$f"
+          done
