@@ -1,15 +1,28 @@
 # claude-setup
 
-Minha configuração pessoal do [Claude Code](https://claude.com/claude-code) — CLAUDE.md global, statusline custom, e a stack de plugins/skills que uso todo dia.
+Minha configuração pessoal do [Claude Code](https://claude.com/claude-code) — CLAUDE.md global, statusline custom, skills próprias, e a stack de plugins de terceiro que uso todo dia.
 
 ## O que tem aqui
 
-| Arquivo | O que é |
+| Caminho | O que é |
 |---|---|
 | `CLAUDE.md` | Regras globais, aplicadas em todo projeto (`~/.claude/CLAUDE.md`) |
 | `RTK.md` | Doc do [RTK](#rtk---rust-token-killer), importado pelo CLAUDE.md via `@RTK.md` |
 | `statusline/statusline.mjs` | Script Node do statusline (ver abaixo) |
 | `settings.example.json` | Trecho representativo do `~/.claude/settings.json` — hooks, plugins, prefs |
+| `skills/` | Minhas skills próprias — ver [seção abaixo](#skills-próprias) |
+| `install.sh` | Symlinka tudo isso pro `~/.claude` de uma máquina nova |
+
+## install.sh
+
+Em vez de copiar arquivo por arquivo numa máquina nova, `./install.sh` symlinka `CLAUDE.md`, `RTK.md`, `statusline/statusline.mjs` e cada pasta em `skills/` pra dentro do `~/.claude` real. Symlink em vez de cópia porque um `git pull` neste repo já atualiza tudo instalado, sem reinstalar nada. Não sobrescreve arquivo real que já exista (só symlink solto), e não mexe em plugins de terceiro (RTK, superpowers, caveman, impeccable) — esses têm instalação própria, ver seções abaixo.
+
+```bash
+git clone https://github.com/will-pagane/claude-setup.git
+cd claude-setup
+./install.sh              # tudo
+./install.sh --skills     # só as skills, pula CLAUDE.md/statusline
+```
 
 ## Filosofia (do CLAUDE.md)
 
@@ -36,32 +49,37 @@ meu-repo │ ⎇ main │ ⌂ (principal) │ ✎ 2 files
 ```
 
 - Barra de contexto/5h/7d com **gradiente verde→amarelo→vermelho** em degraus de 10% (truecolor).
-- Linha do **Codex** lida o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s.
+- Linha do **Codex** lê o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s.
 - **Custo em BRL** ao lado do USD nativo — cotação via [open.er-api.com](https://www.exchangerate-api.com/docs/free) (sem chave), cache de 12h em disco, fallback fixo se offline.
 - Linhas de Codex e git **só aparecem dentro de um repo** (`git rev-parse --is-inside-work-tree`) — fora de um checkout, mostra só Claude + modelo/custo/duração.
-
-Instalar: copie `statusline/statusline.mjs` pra `~/.claude/statusline/` e aponte `statusLine.command` no `settings.json` (ver `settings.example.json`).
 
 ## RTK - Rust Token Killer
 
 CLI que filtra saída de `git`/`bash` antes de voltar pro contexto do Claude — corta até 90% do texto ruidoso (logs de git, output verboso de build). Um hook `PreToolUse` reescreve todo `Bash` transparente pra passar por ele. Ver `RTK.md`.
 
-## Skills que uso (não vendorizadas aqui)
+## Skills próprias
 
-Skills instaladas via marketplace/pacote, cada uma no seu próprio repo — listo pra quem quiser instalar as mesmas, não copio o conteúdo (licença de terceiro, e ficaria desatualizado):
+Autorais ou modificadas por mim o suficiente pra valer vendorizar aqui direto (não são um link pra repo alheio):
 
-| Skill | Pra quê | Fonte |
-|---|---|---|
-| `superpowers` | Brainstorming, TDD, debugging sistemático, code review — o processo por trás de toda tarefa | plugin oficial `claude-plugins-official` |
-| `caveman` | Modo de resposta ultra-comprimido (~75% menos token), mantendo precisão técnica | [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) |
-| `impeccable` | Design/crítica de UI, sistema de design | [pbakaus/impeccable](https://github.com/pbakaus/impeccable) |
-| `grill-me-codex` | Entrevista adversarial sobre um plano, depois OpenAI Codex revisa em sandbox read-only | adaptado de [mattpocock/skills](https://github.com/mattpocock/skills) (MIT) |
-| `codex-review` | Loop Claude↔Codex revisando um plano antes de escrever código | — |
-| `graphify` | Grafo de conhecimento do código (rotas→arquivos→hooks→RPCs), consultável em vez de grep às cegas | — |
-| `composio-cli` | Operar o Composio CLI (tools, triggers, workflows) | — |
+| Skill | Pra quê |
+|---|---|
+| `session-build` | Pega specs escritas numa sessão e leva até shipped: implementa, testa, abre PR |
+| `session-handoff` | Gera um prompt único e autocontido pra continuar a sessão em outra janela/agente |
+| `code-ultragraph-review` | Review de codebase inteiro via grafo de conhecimento (graphify) — modo `--autopilot` roda pipeline autônomo: lê sinais do Supabase, aplica fix, verifica, abre PR |
+| `codex-review` | Loop adversarial Claude↔Codex revisando um plano de implementação antes de escrever código — modifiquei a versão original pro meu fluxo |
+
+## Plugins e skills de terceiro que uso
+
+Instalados via marketplace, cada um no seu próprio repo — listo pra quem quiser instalar as mesmas, não vendorizo (repo já mantém isso atualizado, e evita duplicar licença/atribuição de terceiro):
+
+| Nome | Pra quê | Fonte | Instalar |
+|---|---|---|---|
+| `superpowers` | Brainstorming, TDD, debugging sistemático, code review — o processo por trás de toda tarefa | plugin oficial, [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | `/plugin marketplace add anthropics/claude-plugins-official` depois `/plugin install superpowers` |
+| `caveman` | Modo de resposta ultra-comprimido (~75% menos token), mantendo precisão técnica | [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) | `/plugin marketplace add JuliusBrussee/caveman` depois `/plugin install caveman` |
+| `impeccable` | Design/crítica de UI, sistema de design | [pbakaus/impeccable](https://github.com/pbakaus/impeccable) | `/plugin marketplace add pbakaus/impeccable` depois `/plugin install impeccable` |
+| `graphify` | Transforma qualquer pasta (código, docs, PDF, imagem, vídeo) num grafo de conhecimento navegável — base do `code-ultragraph-review` acima | [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) | `uv tool install graphifyy` (ou `pipx install graphifyy`) depois `graphify install` |
 
 ## O que ainda quero adicionar
 
-- `install.sh` — symlink de `CLAUDE.md`/`statusline.mjs` pra `~/.claude/` numa máquina nova
 - GIF do statusline em ação
 - Seção sobre o modo caveman (por quê, quando vale, quando desliga)
