@@ -57,6 +57,8 @@ meu-repo │ ⎇ main │ ⌂ (principal) │ ✎ 2 files
 
 CLI que filtra saída de `git`/`bash` antes de voltar pro contexto do Claude — corta até 90% do texto ruidoso (logs de git, output verboso de build). Um hook `PreToolUse` reescreve todo `Bash` transparente pra passar por ele. Ver `RTK.md`.
 
+Instalar: `brew install rtk` ([rtk-ai.app](https://www.rtk-ai.app/), Apache-2.0).
+
 ## Skills próprias
 
 Autorais ou modificadas por mim o suficiente pra valer vendorizar aqui direto (não são um link pra repo alheio):
