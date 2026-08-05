@@ -10,7 +10,10 @@
 //     rodizio quando ha um rodando
 //   - Stats: tokens novos gastos (sessao + sub-agentes) · ritmo de burn
 //     (fogo vs media historica)
-//   Codex/Git/Porta so entram no rodizio dentro de um repo git; Modelo/custo
+//   - Gate build/lint/test: le Bash tool_use/tool_result da sessao+sub-agentes
+//     (nao roda nada, so observa o que ja rodou) — so entra se houver
+//     transcript E package.json no toplevel do repo
+//   Codex/Git/Porta/Gate so entram no rodizio dentro de um repo git; Modelo/custo
 //   e Stats entram sempre. Rodizio some so se nao sobrar nenhum candidato.
 // Uma regua fina separa cada linha, inclusive depois da ultima.
 // Sem badge caveman (modo caveman segue ativo via hook + flag .caveman-active).
@@ -59,6 +62,9 @@ const COL = {
   costBrl: 114, // verde-azulado (BRL)
   dur: 109, // azul-piscina
   tokens: 183, // lilas — total de tokens (sessao + sub-agentes)
+  warn: 203, // vermelho — modelo sem entrada em MODEL_PRICING
+  gateFresh: 150, // verde — build/lint/test passou dentro do threshold de 10min
+  gateStale: 214, // amarelo — passou, mas faz mais de 10min
 };
 
 // gradiente de cor por percentual, em degraus de 10%: verde -> amarelo -> vermelho
@@ -226,7 +232,6 @@ const line1 = [segClaude, segCtx, seg5h, seg7d].join(`  ${sep}  `);
 const modelName = J?.model?.display_name || J?.model?.id || "?";
 const segModelName = `${bold}${c(COL.claude)}◆ ${modelName}${RESET}`;
 
-const costUsd = J?.cost?.total_cost_usd;
 const durMs = J?.cost?.total_duration_ms;
 
 // Tempo ativo = soma de todo evento "turn_duration" no transcript da sessao,
@@ -339,6 +344,93 @@ function listJsonlRecursive(dir) {
   return out;
 }
 
+// Lista transcript da sessao + todo transcript de sub-agente rodado a
+// partir dela — mesma "sessao filha" que tokenTotals()/costTotals() ja
+// escaneiam, so que aqui pro dev-loop-gate. Duplica a logica de achar
+// subDir em vez de refatorar tokenTotals/costTotals pra usar isto — risco
+// desnecessario mexer em codigo que ja funciona so pra desduplicar linhas.
+function sessionAndSubagentFiles() {
+  const transcriptPath = J?.transcript_path;
+  const sessionId = J?.session_id;
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) return [];
+  const subDir = path.join(path.dirname(transcriptPath), sessionId, "subagents");
+  return [transcriptPath, ...listJsonlRecursive(subDir)];
+}
+
+// Classificacao de comando Bash por categoria de gate — regex, sem ler
+// package.json. Um comando pode bater em mais de uma categoria (linha
+// composta com &&); cada categoria e avaliada independente.
+const DEV_GATE_PATTERNS = {
+  build: [/\b(npm|pnpm|yarn)\s+(run\s+)?build\b/i, /\btsc\b.*--noEmit/i],
+  lint: [/\b(npm|pnpm|yarn)\s+(run\s+)?lint\b/i, /\beslint\b/i],
+  test: [/\b(npm|pnpm|yarn)\s+(run\s+)?test\b/i, /\bvitest\b/i, /\bjest\b/i],
+};
+
+// Escaneia UM arquivo de transcript: pareia cada tool_use do Bash com seu
+// tool_result (por tool_use_id, exato — nao por posicao), classifica o
+// comando, e guarda so o match MAIS RECENTE por categoria DENTRO DESTE
+// ARQUIVO. A mescla entre arquivos (sessao + cada sub-agente) acontece em
+// devGateResults() abaixo, comparando timestamp.
+function scanDevGateFile(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return {};
+  }
+  const commandById = new Map();
+  const best = {};
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let d;
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = d?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (
+        block?.type === "tool_use" &&
+        block?.name === "Bash" &&
+        typeof block?.input?.command === "string"
+      ) {
+        commandById.set(block.id, block.input.command);
+      } else if (block?.type === "tool_result" && block?.tool_use_id) {
+        const command = commandById.get(block.tool_use_id);
+        const ts = d.timestamp;
+        if (!command || !ts) continue;
+        const ok = block.is_error !== true;
+        for (const [category, patterns] of Object.entries(DEV_GATE_PATTERNS)) {
+          if (!patterns.some((re) => re.test(command))) continue;
+          if (!best[category] || ts > best[category].ts) {
+            best[category] = { ok, ts };
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// Mescla o resultado de scanDevGateFile() atraves de todos os arquivos da
+// sessao (principal + sub-agentes) — comparando timestamp, NAO ordem de
+// arquivo, porque um sub-agente pode ter rodado depois do ultimo turno
+// visivel no transcript principal.
+function devGateResults() {
+  const merged = {};
+  for (const file of sessionAndSubagentFiles()) {
+    const fileResult = scanDevGateFile(file);
+    for (const [category, result] of Object.entries(fileResult)) {
+      if (!merged[category] || result.ts > merged[category].ts) {
+        merged[category] = result;
+      }
+    }
+  }
+  return merged;
+}
+
 function tokenTotals() {
   const transcriptPath = J?.transcript_path;
   const sessionId = J?.session_id;
@@ -352,15 +444,98 @@ function tokenTotals() {
 }
 const tt = tokenTotals();
 
+// Preco por milhao de tokens (USD), por model id exato como aparece em
+// message.model no transcript. Cache write/read sao multiplicador sobre o
+// preco de input (5m=1.25x, 1h=2x, read=0.1x), ja calculado aqui.
+// Sonnet 5 esta com preco promocional ate 2026-08-31 — depois disso trocar
+// pra {input:3.00, output:15.00, cacheWrite5m:3.75, cacheWrite1h:6.00, cacheRead:0.30}.
+const MODEL_PRICING = {
+  "claude-fable-5":           { input: 10.00, output: 50.00, cacheWrite5m: 12.50, cacheWrite1h: 20.00, cacheRead: 1.00 },
+  "claude-mythos-5":          { input: 10.00, output: 50.00, cacheWrite5m: 12.50, cacheWrite1h: 20.00, cacheRead: 1.00 },
+  "claude-opus-5":            { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
+  "claude-opus-4-8":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
+  "claude-opus-4-7":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
+  "claude-opus-4-6":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
+  "claude-sonnet-5":          { input: 2.00,  output: 10.00, cacheWrite5m: 2.50,  cacheWrite1h: 4.00,  cacheRead: 0.20 }, // intro ate 2026-08-31
+  "claude-sonnet-4-6":        { input: 3.00,  output: 15.00, cacheWrite5m: 3.75,  cacheWrite1h: 6.00,  cacheRead: 0.30 },
+  "claude-haiku-4-5-20251001":{ input: 1.00,  output: 5.00,  cacheWrite5m: 1.25,  cacheWrite1h: 2.00,  cacheRead: 0.10 },
+};
+
+// Custo real: soma usage(assistant) precificado pelo MODELO DAQUELE turno
+// especifico (nao um preco fixo pra sessao inteira) — sessao/subagente pode
+// misturar Sonnet, Haiku, Opus, Fable no mesmo transcript. Mesma varredura
+// session+subagentes do tokenTotals() acima, so que preca em vez de somar
+// bruto. Modelo sem entrada em MODEL_PRICING e pulado (nao arrisca preco
+// errado) — cai no fallback de cost.total_cost_usd mais abaixo se isso
+// zerar o total.
+function sumUsageCostUsd(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const line of raw.split("\n")) {
+    if (!line || !line.includes('"usage"')) continue;
+    try {
+      const msg = JSON.parse(line)?.message;
+      const u = msg?.usage;
+      const model = msg?.model;
+      if (!u || !model) continue;
+      const price = MODEL_PRICING[model];
+      if (!price) continue;
+      const cc = u.cache_creation;
+      const write5m = cc ? cc.ephemeral_5m_input_tokens || 0 : u.cache_creation_input_tokens || 0;
+      const write1h = cc ? cc.ephemeral_1h_input_tokens || 0 : 0;
+      total +=
+        ((u.input_tokens || 0) * price.input +
+          (u.output_tokens || 0) * price.output +
+          (u.cache_read_input_tokens || 0) * price.cacheRead +
+          write5m * price.cacheWrite5m +
+          write1h * price.cacheWrite1h) /
+        1e6;
+    } catch {}
+  }
+  return total;
+}
+
+function costTotals() {
+  const transcriptPath = J?.transcript_path;
+  const sessionId = J?.session_id;
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) return null;
+  const sessionCost = sumUsageCostUsd(transcriptPath);
+  const subDir = path.join(path.dirname(transcriptPath), sessionId, "subagents");
+  const subFiles = listJsonlRecursive(subDir);
+  let subagentCost = 0;
+  for (const f of subFiles) subagentCost += sumUsageCostUsd(f);
+  return { sessionCost, subagentCost, total: sessionCost + subagentCost };
+}
+const ct = costTotals();
+// ct.total==0 pode ser sessao nova OU so modelos desconhecidos — cai pro
+// numero do harness (so loop principal, mas sempre disponivel) em vez de
+// mostrar $0.00 errado.
+const costUsd = ct != null && ct.total > 0 ? ct.total : J?.cost?.total_cost_usd ?? null;
+
+// Modelo atual (o desta sessao/turno, nao dos sub-agentes) sem entrada em
+// MODEL_PRICING — o total acima ja pula turnos assim (sem arriscar preco
+// errado), mas isso pode SUBESTIMAR o custo mostrado sem nenhum aviso. Avisa
+// explicito em vez de deixar o numero parecer completo quando nao e.
+const currentModelId = J?.model?.id;
+const modelUnpriced = currentModelId != null && !MODEL_PRICING[currentModelId];
+
 const segCost = (() => {
   if (costUsd == null) return `${dim}custo${RESET} ${dim}—${RESET}`;
   const { rate, stale } = usdToBrlRate();
   const brl = (costUsd * rate).toFixed(2);
-  return (
+  let out =
     `${dim}custo${RESET} ${c(COL.cost)}$${costUsd.toFixed(2)}${RESET}` +
     `${dim} - ${RESET}` +
-    `${c(COL.costBrl)}R$${brl}${RESET}${stale ? ` ${dim}~${RESET}` : ""}`
-  );
+    `${c(COL.costBrl)}R$${brl}${RESET}${stale ? ` ${dim}~${RESET}` : ""}`;
+  if (modelUnpriced) {
+    out += ` ${c(COL.warn)}⚠ ${currentModelId} sem preco, custo pode estar subestimado${RESET}`;
+  }
+  return out;
 })();
 
 // Ritmo de burn: CUSTO, nao contexto. Mede tokens novos gastos por minuto
@@ -567,6 +742,39 @@ function codexSeg() {
   return `${label}  ${sep}  ${rest}`;
 }
 
+const DEV_GATE_FRESH_MS = 10 * 60 * 1000;
+
+// Segmento de gate build/lint/test — so aparece se houver transcript E
+// package.json no toplevel (senao nao faz sentido nesse checkout/sessao).
+// Categoria nunca rodada nessa sessao continua visivel (cinza "—") de
+// proposito: a ausencia e o sinal, nao ruido pra esconder.
+function devGateSeg(top) {
+  if (!top) return null;
+  if (!J?.transcript_path) return null;
+  let hasPkg = false;
+  try {
+    hasPkg = fs.existsSync(path.join(top, "package.json"));
+  } catch {
+    hasPkg = false;
+  }
+  if (!hasPkg) return null;
+
+  const results = devGateResults();
+  const now = Date.now();
+  const parts = ["build", "lint", "test"].map((category) => {
+    const r = results[category];
+    if (!r) return `${dim}${category} —${RESET}`;
+    const ageMs = now - Date.parse(r.ts);
+    const ageStr = `${fmtDur(ageMs / 1000)} atras`;
+    if (!r.ok) {
+      return `${c(COL.warn)}${category} ✗ ${ageStr}${RESET}`;
+    }
+    const color = ageMs <= DEV_GATE_FRESH_MS ? c(COL.gateFresh) : c(COL.gateStale);
+    return `${color}${category} ✓ ${ageStr}${RESET}`;
+  });
+  return parts.join(`  ${sep}  `);
+}
+
 // Codex/Git/Porta so fazem sentido dentro de um repo — fora de um checkout
 // nao ha branch/worktree/files/dev-server pra mostrar. Modelo/custo e Stats
 // entram sempre.
@@ -617,6 +825,10 @@ if (inRepo) {
       `${dim}dev server${RESET}  ${c(COL.port)}⚡ :${port}${RESET}`
     );
   }
+
+  // ---------- Gate build/lint/test (so entra se houver package.json) ----------
+  const devGate = devGateSeg(top);
+  if (devGate) rotateCandidates.push(devGate);
 }
 
 if (segStats) rotateCandidates.push(segStats);
