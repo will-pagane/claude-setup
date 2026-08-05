@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 // Fenix statusline — custom multi-linha para Claude Code.
-// Linha 1: "Claude" (laranja) · Context(barra+tokens) · Sessao 5h · Sessao 7d
-// Linha 2: modelo (laranja) · custo "$USD - R$BRL" · duracao (ativo/total) · ritmo (fogo 1-3x vs media historica)
-// Linha 3: "Codex" (azul fixo) · uso semanal (explicativo, barra branca)
-// Linha 4: repo · branch · worktree · files do checkout
-// Linha 5: porta do dev server (npm run dev / vite) deste checkout especifico
-//          — so aparece quando ha um rodando, senao a linha some
+// Linha 1 (fixa): "Claude" (laranja) · Context(barra+tokens) · Sessao 5h · Sessao 7d
+// Linha 2 (fixa): modelo (laranja) · custo "$USD - R$BRL"
+// Linha 3 (rodizio, troca a cada 15s por relogio de parede — nao depende de
+//          quando o statusline e re-renderizado, so de que horas sao agora):
+//   - Codex: uso semanal (barra branca)
+//   - Git: repo · branch · worktree · files do checkout
+//   - Porta do dev server (npm run dev / vite) deste checkout — so entra no
+//     rodizio quando ha um rodando
+//   - Stats: tokens novos gastos (sessao + sub-agentes) · duracao (ativo/
+//     total) · ritmo de burn (fogo vs media historica)
+//   Codex/Git/Porta so entram no rodizio dentro de um repo git; Stats entra
+//   sempre. Rodizio some so se nao sobrar nenhum candidato.
 // Uma regua fina separa cada linha, inclusive depois da ultima.
 // Sem badge caveman (modo caveman segue ativo via hook + flag .caveman-active).
 //
@@ -52,6 +58,7 @@ const COL = {
   cost: 150, // verde-claro (USD)
   costBrl: 114, // verde-azulado (BRL)
   dur: 109, // azul-piscina
+  tokens: 183, // lilas — total de tokens (sessao + sub-agentes)
 };
 
 // gradiente de cor por percentual, em degraus de 10%: verde -> amarelo -> vermelho
@@ -283,6 +290,68 @@ function usdToBrlRate() {
   return { rate: FALLBACK, stale: true };
 }
 
+// Tokens "novos": soma de usage(assistant) no transcript da sessao + todo
+// transcript de sub-agente (Task/Agent tool, workflows) rodado a partir dela
+// — "sessoes filhas" vivem em <sessionDir>/<sessionId>/subagents/**, arquivos
+// separados que o campo cost.total_cost_usd do stdin ja pode nao refletir
+// (sessoes/jobs em background tem cobranca propria).
+// SO input+output+cache_creation — NAO cache_read_input_tokens. cache_read e
+// releitura do MESMO contexto ja pago, repetida a cada turno da sessao inteira;
+// somar isso ao longo de uma sessao longa infla o total pra milhoes sem
+// significar trabalho novo (sessao com contexto de 100k pode acumular 3-4M
+// so de releituras de cache, custando centavos por ser ~10% do preco normal).
+function sumUsageTokens(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const line of raw.split("\n")) {
+    if (!line || !line.includes('"usage"')) continue;
+    try {
+      const u = JSON.parse(line)?.message?.usage;
+      if (u) {
+        total +=
+          (u.input_tokens || 0) +
+          (u.output_tokens || 0) +
+          (u.cache_creation_input_tokens || 0);
+      }
+    } catch {}
+  }
+  return total;
+}
+
+function listJsonlRecursive(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  let out = [];
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...listJsonlRecursive(p));
+    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
+  }
+  return out;
+}
+
+function tokenTotals() {
+  const transcriptPath = J?.transcript_path;
+  const sessionId = J?.session_id;
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) return null;
+  const sessionTokens = sumUsageTokens(transcriptPath);
+  const subDir = path.join(path.dirname(transcriptPath), sessionId, "subagents");
+  const subFiles = listJsonlRecursive(subDir);
+  let subagentTokens = 0;
+  for (const f of subFiles) subagentTokens += sumUsageTokens(f);
+  return { sessionTokens, subagentTokens, total: sessionTokens + subagentTokens };
+}
+const tt = tokenTotals();
+
 const segCost = (() => {
   if (costUsd == null) return `${dim}custo${RESET} ${dim}—${RESET}`;
   const { rate, stale } = usdToBrlRate();
@@ -294,23 +363,23 @@ const segCost = (() => {
   );
 })();
 
-// Ritmo de burn: tokens de contexto acumulados por minuto ativo — nao custo.
-// Dois sinais combinados, o maior vence:
-//   1) ratio vs media historica (tokens/min desta sessao / tokens/min medio
-//      de outras sessoes) — log local em jsonl, uma linha por sessao (upsert
-//      por session_id), podado pra 30 dias / 500 sessoes a cada escrita.
-//      So entra em jogo com >=3 sessoes historicas de >=1min ativo, senao
-//      baseline fraca vira ruido.
-//   2) piso pelo % de contexto cheio (ctxPct) — sobe o fogo mesmo sem
-//      historico, porque contexto quase estourando e um risco por si so
-//      (compact iminente), independente do ritmo estar "normal".
-// Precisa de >=30s ativo na sessao atual pra qualquer leitura fazer sentido.
-function burnPaceSeg() {
+// Ritmo de burn: CUSTO, nao contexto. Mede tokens novos gastos por minuto
+// ativo (sessao + sub-agentes — os tokens que contam pro limite de 7 dias,
+// via tt.total ja somado acima) contra a media historica de OUTRAS sessoes.
+// So fogo se sessao esta cara comparada ao seu proprio historico; sessao
+// normal fica em 0-1 fogo, so escala com sessao genuinamente mais cara que
+// o costume. Log em arquivo proprio (v2 — schema trocou de "tokens de
+// contexto" pra "tokens novos gastos", nao dava pra reaproveitar o log
+// antigo sem contaminar a baseline com escalas diferentes).
+// Precisa de >=30s ativo na sessao atual E >=3 sessoes historicas de
+// >=1min ativo pra qualquer leitura fazer sentido — sem baseline, esconde
+// o segmento (sem sinal ainda) em vez de arriscar leitura errada.
+function burnPaceSeg(tt) {
   const sessionId = J?.session_id;
   if (!sessionId || activeMs == null || activeMs < 30000) return null;
-  if (!ctxSize) return null; // sem tamanho de janela nao da pra medir % cheio
+  if (!tt || tt.total <= 0) return null;
 
-  const logFile = path.join(HOME, ".claude", "statusline", ".burn-log.jsonl");
+  const logFile = path.join(HOME, ".claude", "statusline", ".burn-log-v2.jsonl");
   const now = Date.now();
   const map = new Map();
   try {
@@ -325,21 +394,16 @@ function burnPaceSeg() {
   } catch {}
 
   // Ritmo marginal (delta desde o ultimo render deste MESMO session_id) com
-  // suavizacao EMA — pro ETA de handoff usar o ritmo RECENTE, nao a media
-  // desde o inicio da sessao. Media-desde-o-inicio conflita a carga fixa e
-  // unica de contexto (system prompt + CLAUDE.md, que entra de uma vez logo
-  // no primeiro turno) com o crescimento real por turno: sessao jovem tem
-  // essa carga ainda "concentrada" no denominador pequeno de tempo ativo, o
-  // que infla a taxa e encolhe o ETA — mesmo tendo mais espaco livre que uma
-  // sessao antiga que ja diluiu aquele pico inicial ao longo de horas.
+  // suavizacao EMA — pro label mostrar o ritmo RECENTE, nao a media desde o
+  // inicio da sessao (que dilui um pico ou uma pausa longa de historico).
   const prevRec = map.get(sessionId) || null;
   const MIN_DELTA_ACTIVE_MS = 20000; // exige >=20s ativo novo pra amostrar de novo
   let rateEma = prevRec?.rate_ema ?? null;
   if (prevRec) {
-    const deltaTokens = ctxTok - (prevRec.tokens ?? ctxTok);
+    const deltaTokens = tt.total - (prevRec.tokens ?? tt.total);
     const deltaActiveMs = activeMs - (prevRec.active_ms ?? activeMs);
-    // deltaTokens < 0 acontece apos /compact (contexto encolheu) — pula a
-    // amostra em vez de deixar isso virar um "ritmo negativo".
+    // deltaTokens < 0 nao deveria acontecer (tokens gastos so crescem), mas
+    // pula a amostra em vez de deixar virar "ritmo negativo" por seguranca.
     if (deltaTokens >= 0 && deltaActiveMs >= MIN_DELTA_ACTIVE_MS) {
       const instRate = deltaTokens / (deltaActiveMs / 60000);
       rateEma = rateEma == null ? instRate : 0.3 * instRate + 0.7 * rateEma;
@@ -349,12 +413,12 @@ function burnPaceSeg() {
     // primeiro render da sessao, sem delta ainda pra medir — usa a media
     // acumulada soh como semente inicial; a partir do proximo render o EMA
     // marginal assume e corrige o vies.
-    rateEma = activeMs > 0 ? ctxTok / (activeMs / 60000) : 0;
+    rateEma = activeMs > 0 ? tt.total / (activeMs / 60000) : 0;
   }
 
   map.set(sessionId, {
     session_id: sessionId,
-    tokens: ctxTok,
+    tokens: tt.total,
     active_ms: activeMs,
     rate_ema: rateEma,
     ts: now,
@@ -371,54 +435,61 @@ function burnPaceSeg() {
     );
   } catch {}
 
-  const currentRate = ctxTok / (activeMs / 60000); // tokens/min ativo, media desde o inicio — so pro ritmo vs historico de OUTRAS sessoes (onde media-desde-o-inicio e a comparacao correta e justa)
+  // Media desde o inicio (nao o EMA marginal) pra comparar com a baseline —
+  // baseline de outras sessoes tambem e media-desde-o-inicio delas, entao
+  // e a comparacao justa (maca com maca).
+  const currentRate = tt.total / (activeMs / 60000);
 
-  // Ritmo vs media historica de outras sessoes — informativo, NAO decide o
-  // fogo sozinho. Contexto 16% cheio com ritmo 3.9x historico chegava a
-  // mostrar 4/5 fogos (bug reportado): ritmo rapido != urgencia de handoff
-  // quando ainda sobra quase toda a janela. Fogo fica ancorado no %
-  // contexto; ritmo so modula +-1 em cima disso.
   const baseline = entries.filter(
     (r) =>
       r.session_id !== sessionId &&
       r.tokens != null &&
       (r.active_ms || 0) >= 60000
   );
-  let ratio = null;
-  if (baseline.length >= 3) {
-    const sumTokens = baseline.reduce((s, r) => s + r.tokens, 0);
-    const sumActiveMin = baseline.reduce((s, r) => s + r.active_ms / 60000, 0);
-    const baselineRate = sumActiveMin > 0 ? sumTokens / sumActiveMin : 0;
-    if (baselineRate > 0) ratio = currentRate / baselineRate;
-  }
+  if (baseline.length < 3) return null; // sem baseline confiavel, sem sinal pra mostrar
 
-  let fires =
-    ctxPct >= 90 ? 5 : ctxPct >= 75 ? 4 : ctxPct >= 55 ? 3 : ctxPct >= 35 ? 2 : 1;
-  if (ratio != null) {
-    if (ratio >= 2.0) fires = Math.min(5, fires + 1);
-    else if (ratio <= 0.5) fires = Math.max(1, fires - 1);
-  }
+  const sumTokens = baseline.reduce((s, r) => s + r.tokens, 0);
+  const sumActiveMin = baseline.reduce((s, r) => s + r.active_ms / 60000, 0);
+  const baselineRate = sumActiveMin > 0 ? sumTokens / sumActiveMin : 0;
+  if (baselineRate <= 0) return null;
+  const ratio = currentRate / baselineRate;
 
-  // Label = ETA de handoff no ritmo marginal (rateEma), sempre — o numero
-  // acionavel que decide "quando fazer handoff", nunca um % ja repetido na
-  // linha 1. Anota o ritmo vs historico so quando notavelmente rapido.
-  const remaining = Math.max(0, ctxSize - ctxTok);
-  let label =
-    rateEma > 0
-      ? `~${fmtDur((remaining / rateEma) * 60)} p/ handoff`
-      : `handoff`;
-  if (ratio != null && ratio >= 1.5) label += ` (${ratio.toFixed(1)}x ritmo)`;
+  // Degraus deliberadamente enviesados pra baixo: sessao no ritmo normal
+  // (perto de 1x a propria media historica) fica em 0-1 fogo. So sessao
+  // genuinamente mais cara que o costume sobe fogo.
+  const fires =
+    ratio < 0.6 ? 0 : ratio < 1.1 ? 1 : ratio < 1.8 ? 2 : ratio < 2.8 ? 3 : ratio < 4.5 ? 4 : 5;
 
-  return `${pctColorSeq(fires * 20)}${"🔥".repeat(fires)} ${label}${RESET}`;
+  const label = `${ratio.toFixed(1)}x ritmo · ${fmtTokens(rateEma)} tok/min`;
+  const icon = fires === 0 ? "❄" : "🔥".repeat(fires);
+  const color = fires === 0 ? c(COL.h5) : pctColorSeq(fires * 20);
+  return `${color}${icon} ${label}${RESET}`;
 }
 
-const segPace = burnPaceSeg();
+const segPace = burnPaceSeg(tt);
 
-const line2 = [segModelName, segCost, segDur, segPace]
-  .filter(Boolean)
-  .join(`  ${sep}  `);
+const line2 = [segModelName, segCost, segDur].filter(Boolean).join(`  ${sep}  `);
 
-// ---------- LINHA 3 ("Codex" · uso semanal) ----------
+// Stats (tokens novos + ritmo de burn) — um dos candidatos do rodizio da
+// linha 3. Duracao fica so na linha 2 (fixa), sem duplicar aqui.
+function statsSeg() {
+  const parts = [];
+  if (tt && tt.total > 0) {
+    parts.push(
+      `${c(COL.tokens)}tokens ${fmtTokens(tt.total)}${RESET}` +
+        (tt.subagentTokens > 0
+          ? ` ${dim}(${fmtTokens(tt.sessionTokens)} + ${fmtTokens(
+              tt.subagentTokens
+            )} sub-agentes)${RESET}`
+          : "")
+    );
+  }
+  if (segPace) parts.push(segPace);
+  return parts.length ? parts.join(`  ${sep}  `) : null;
+}
+const segStats = statsSeg();
+
+// ---------- CANDIDATOS DO RODIZIO ("Codex" · uso semanal) ----------
 
 // Codex 7d (janela weekly) — do rollout mais recente, com cache 60s
 function codexWeekly() {
@@ -493,23 +564,19 @@ function codexSeg() {
   return `${label}  ${sep}  ${rest}`;
 }
 
-// Linhas 3 e 4 (Codex + git) so fazem sentido dentro de um repo — fora de um
-// checkout nao ha branch/worktree/files pra mostrar, e a linha do Codex vai
-// junto (agrupadas como "contexto de repo").
-let line3 = null;
-let line4 = null;
-let line5 = null;
+// Codex/Git/Porta so fazem sentido dentro de um repo — fora de um checkout
+// nao ha branch/worktree/files/dev-server pra mostrar. Stats entra sempre.
+const rotateCandidates = [];
 
 if (inRepo) {
-  line3 = codexSeg();
+  rotateCandidates.push(codexSeg());
 
-  // ---------- LINHA 4 (repo · branch · worktree · files) ----------
+  // ---------- Git (repo · branch · worktree · files) ----------
   const repoName = J?.workspace?.repo?.name;
   const segRepo = repoName
     ? `${c(COL.repo)}${repoName}${RESET}`
     : `${dim}repo?${RESET}`;
 
-  // Branch
   const branch =
     sh("git rev-parse --abbrev-ref HEAD", cwd) ||
     sh("git symbolic-ref --short HEAD", cwd) ||
@@ -534,20 +601,38 @@ if (inRepo) {
   const filesColor = nFiles === 0 ? 245 : COL.files;
   const segFiles = `${c(filesColor)}✎ ${nFiles} ${nFiles === 1 ? "file" : "files"}${RESET}`;
 
-  line4 = [segRepo, segBranch, segWt, segFiles].join(`  ${sep}  `);
+  rotateCandidates.push(
+    [segRepo, segBranch, segWt, segFiles].join(`  ${sep}  `)
+  );
 
-  // ---------- LINHA 5 (porta do npm run dev deste checkout, se houver) ----------
+  // ---------- Porta do npm run dev deste checkout (so entra se houver) ----------
   const top = sh("git rev-parse --show-toplevel", cwd);
   const port = devPortSeg(cwd, top);
   if (port) {
-    line5 = `${dim}dev server${RESET}  ${c(COL.port)}⚡ :${port}${RESET}`;
+    rotateCandidates.push(
+      `${dim}dev server${RESET}  ${c(COL.port)}⚡ :${port}${RESET}`
+    );
   }
+}
+
+if (segStats) rotateCandidates.push(segStats);
+
+// Rodizio por relogio de parede — nao por contagem de render. Cada 15s reais
+// (ROTATE_MS) avanca pro proximo candidato disponivel nesse momento; troca de
+// tamanho do array entre renders (ex.: dev server subiu/caiu) so muda o
+// mapeamento indice->candidato dali pra frente, sem quebrar nada.
+const ROTATE_MS = 15000;
+let line3 = null;
+if (rotateCandidates.length === 1) {
+  line3 = rotateCandidates[0];
+} else if (rotateCandidates.length > 1) {
+  const rotIdx = Math.floor(Date.now() / ROTATE_MS) % rotateCandidates.length;
+  line3 = `${rotateCandidates[rotIdx]}  ${dim}(${rotIdx + 1}/${rotateCandidates.length})${RESET}`;
 }
 
 // ---------- output ----------
 const R = rule();
-const lines = [line1, line2];
-if (inRepo) lines.push(line3, line4, line5);
+const lines = [line1, line2, line3];
 process.stdout.write(
   lines
     .filter(Boolean)

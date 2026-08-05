@@ -16,7 +16,8 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "node \"$HOME/.claude/statusline/statusline.mjs\""
+    "command": "node \"$HOME/.claude/statusline/statusline.mjs\"",
+    "refreshInterval": 15
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,

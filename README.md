@@ -38,27 +38,29 @@ Os pontos que mais mudam como trabalho com o Claude:
 
 ## Statusline
 
-Statusline em 4-5 linhas (Node puro, zero dependência):
+3 linhas (Node puro, zero dependência) — as duas primeiras fixas, a terceira em rodízio:
 
 ![Statusline em ação](docs/statusline.png)
 
 ```
 Claude │ context ████░░░░ 42% 420k/1M │ 5h ███░░░░ 29% ↺2h │ 7d ███░░░░ 30% ↺5d
 ────────────────────────────────────────────────────
-◆ Opus 4.8 │ custo $2.91 │ brl R$14.76 │ duracao 7m
+◆ Opus 4.8 │ custo $2.91 - R$14.76 │ ⏱ 7m ativo / 12m total
 ────────────────────────────────────────────────────
-Codex │ (uso semanal) ░░░░░░░ 3% reseta em 6d23h
+tokens 542k (480k + 62k sub-agentes) │ 🔥🔥🔥 1.8x ritmo · 50k tok/min │ (4/4)
 ────────────────────────────────────────────────────
-meu-repo │ ⎇ main │ ⌂ (principal) │ ✎ 2 files
-────────────────────────────────────────────────────
-dev server ⚡ :8081
 ```
 
+(o mesmo espaço da linha 3 alterna, a cada `refreshInterval`, entre Codex, git e o bloco de tokens/ritmo acima — ou porta do dev server quando há um rodando)
+
 - Barra de contexto/5h/7d com **gradiente verde→amarelo→vermelho** em degraus de 10% (truecolor).
+- **Linha 3 é um rodízio**, não fixa: alterna entre até 4 candidatos — Codex (uso semanal), git (repo·branch·worktree·files), porta do dev server (só entra se houver um rodando) e o bloco de tokens/ritmo de burn. A troca é por relógio de parede (`Date.now()` dividido pelo intervalo), não por contador de render — por isso o `statusLine.refreshInterval` no `settings.json` **é obrigatório** pra rotação funcionar direito: sem ele, o script só re-roda em eventos (mensagem nova, `/compact`, etc.) e **trava sem trocar** durante um turno longo com vários tool calls seguidos, já que nenhum evento novo dispara nesse meio tempo. `settings.example.json` já inclui `"refreshInterval": 15`.
+- **Tokens** conta só o que representa gasto real: `input + output + cache_creation`, **sem** `cache_read_input_tokens` — cache lido de novo a cada turno da sessão inteira incha o total pra milhões sem refletir trabalho novo (é ~10% do preço normal). Soma o transcript da sessão **+** todo sub-agente disparado a partir dela (Task/Agent tool, Workflows — ficam em `<sessionDir>/<sessionId>/subagents/**/*.jsonl`).
+- **Ritmo de burn (🔥)** compara tokens-novos-por-minuto-ativo desta sessão contra a média histórica das suas próprias sessões (log local `.burn-log-v2.jsonl`, precisa de 3+ sessões históricas de 1min+ ativo pra ter baseline — sem isso, o segmento some em vez de arriscar leitura errada). Degraus enviesados pra baixo: sessão no ritmo normal fica 0-1 fogo (❄ se mais barata que o costume), só sessão genuinamente mais cara que o costume sobe fogo.
 - Linha do **Codex** lê o `rate_limits` direto do rollout `.jsonl` mais recente em `~/.codex/sessions/`, cacheado 60s. **Opcional** — sem o Codex CLI instalado (sem `~/.codex/sessions/`), a linha aparece mesmo assim, só mostra "sem dados" em vez de quebrar.
 - **Custo em BRL** ao lado do USD nativo — cotação via [open.er-api.com](https://www.exchangerate-api.com/docs/free) (sem chave), cache de 12h em disco, fallback fixo se offline.
-- Linhas de Codex e git **só aparecem dentro de um repo** (`git rev-parse --is-inside-work-tree`) — fora de um checkout, mostra só Claude + modelo/custo/duração.
-- **Linha de dev server é condicional** — só aparece quando há um `npm run dev` (vite) rodando *neste checkout especifico* (principal ou worktree, cada um mostra só a própria porta). Detecta perguntando ao SO qual processo `node` escutando TCP tem `cwd` exatamente igual ao toplevel deste checkout e linha de comando contendo `vite` (evita falso-positivo com outro processo node solto na mesma pasta). Sem dev server rodando ali, a linha some.
+- Candidatos de Codex/git/porta **só entram no rodízio dentro de um repo** (`git rev-parse --is-inside-work-tree`) — fora de um checkout, a linha 3 mostra só o bloco de tokens/ritmo (quando houver dado) ou some.
+- **Porta do dev server** detecta perguntando ao SO qual processo `node` escutando TCP tem `cwd` exatamente igual ao toplevel deste checkout (principal ou worktree) e linha de comando contendo `vite` (evita falso-positivo com outro processo node solto na mesma pasta). Sem dev server rodando ali, esse candidato nem entra no rodízio.
 
 ## RTK - Rust Token Killer
 
