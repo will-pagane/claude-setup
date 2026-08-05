@@ -453,6 +453,9 @@ const MODEL_PRICING = {
   "claude-fable-5":           { input: 10.00, output: 50.00, cacheWrite5m: 12.50, cacheWrite1h: 20.00, cacheRead: 1.00 },
   "claude-mythos-5":          { input: 10.00, output: 50.00, cacheWrite5m: 12.50, cacheWrite1h: 20.00, cacheRead: 1.00 },
   "claude-opus-5":            { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
+  // Variante [1m]: 1M de contexto e o padrao do Opus 5, sem premio de
+  // long-context — mesmo preco do id sem sufixo.
+  "claude-opus-5[1m]":        { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
   "claude-opus-4-8":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
   "claude-opus-4-7":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
   "claude-opus-4-6":          { input: 5.00,  output: 25.00, cacheWrite5m: 6.25,  cacheWrite1h: 10.00, cacheRead: 0.50 },
