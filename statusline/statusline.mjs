@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Fenix statusline — custom multi-linha para Claude Code.
 // Linha 1 (fixa): "Claude" (laranja) · Context(barra+tokens) · Sessao 5h · Sessao 7d
-// Linha 2 (fixa): modelo (laranja) · custo "$USD - R$BRL"
-// Linha 3 (rodizio, troca a cada 15s por relogio de parede — nao depende de
+// Linha 2 (rodizio, troca a cada 10s por relogio de parede — nao depende de
 //          quando o statusline e re-renderizado, so de que horas sao agora):
+//   - Modelo/custo: modelo (laranja) · custo "$USD - R$BRL" · duracao (ativo/total)
 //   - Codex: uso semanal (barra branca)
 //   - Git: repo · branch · worktree · files do checkout
 //   - Porta do dev server (npm run dev / vite) deste checkout — so entra no
 //     rodizio quando ha um rodando
-//   - Stats: tokens novos gastos (sessao + sub-agentes) · duracao (ativo/
-//     total) · ritmo de burn (fogo vs media historica)
-//   Codex/Git/Porta so entram no rodizio dentro de um repo git; Stats entra
-//   sempre. Rodizio some so se nao sobrar nenhum candidato.
+//   - Stats: tokens novos gastos (sessao + sub-agentes) · ritmo de burn
+//     (fogo vs media historica)
+//   Codex/Git/Porta so entram no rodizio dentro de um repo git; Modelo/custo
+//   e Stats entram sempre. Rodizio some so se nao sobrar nenhum candidato.
 // Uma regua fina separa cada linha, inclusive depois da ultima.
 // Sem badge caveman (modo caveman segue ativo via hook + flag .caveman-active).
 //
@@ -222,7 +222,7 @@ const seg7d = usageSeg("7d", COL.d7, J?.rate_limits?.seven_day);
 
 const line1 = [segClaude, segCtx, seg5h, seg7d].join(`  ${sep}  `);
 
-// ---------- LINHA 2 (modelo · custo "$USD - R$BRL" · duracao ativo/total) ----------
+// ---------- Modelo · custo "$USD - R$BRL" · duracao ativo/total (candidato do rodizio da linha 2) ----------
 const modelName = J?.model?.display_name || J?.model?.id || "?";
 const segModelName = `${bold}${c(COL.claude)}◆ ${modelName}${RESET}`;
 
@@ -468,10 +468,13 @@ function burnPaceSeg(tt) {
 
 const segPace = burnPaceSeg(tt);
 
-const line2 = [segModelName, segCost, segDur].filter(Boolean).join(`  ${sep}  `);
+// Modelo/custo/duracao — um dos candidatos do rodizio da linha 2 (nao mais
+// linha fixa).
+const segModelCostDur = [segModelName, segCost, segDur]
+  .filter(Boolean)
+  .join(`  ${sep}  `);
 
-// Stats (tokens novos + ritmo de burn) — um dos candidatos do rodizio da
-// linha 3. Duracao fica so na linha 2 (fixa), sem duplicar aqui.
+// Stats (tokens novos + ritmo de burn) — outro candidato do rodizio.
 function statsSeg() {
   const parts = [];
   if (tt && tt.total > 0) {
@@ -565,8 +568,9 @@ function codexSeg() {
 }
 
 // Codex/Git/Porta so fazem sentido dentro de um repo — fora de um checkout
-// nao ha branch/worktree/files/dev-server pra mostrar. Stats entra sempre.
-const rotateCandidates = [];
+// nao ha branch/worktree/files/dev-server pra mostrar. Modelo/custo e Stats
+// entram sempre.
+const rotateCandidates = [segModelCostDur];
 
 if (inRepo) {
   rotateCandidates.push(codexSeg());
@@ -617,22 +621,25 @@ if (inRepo) {
 
 if (segStats) rotateCandidates.push(segStats);
 
-// Rodizio por relogio de parede — nao por contagem de render. Cada 15s reais
+// Rodizio por relogio de parede — nao por contagem de render. Cada 10s reais
 // (ROTATE_MS) avanca pro proximo candidato disponivel nesse momento; troca de
 // tamanho do array entre renders (ex.: dev server subiu/caiu) so muda o
-// mapeamento indice->candidato dali pra frente, sem quebrar nada.
-const ROTATE_MS = 15000;
-let line3 = null;
+// mapeamento indice->candidato dali pra frente, sem quebrar nada. So avanca
+// quando o statusline e re-renderizado pelo harness — sem re-render (ex.:
+// sessao ociosa esperando o usuario), o valor exibido fica parado ate o
+// proximo render, mesmo o indice calculado ja tendo mudado por baixo.
+const ROTATE_MS = 10000;
+let line2 = null;
 if (rotateCandidates.length === 1) {
-  line3 = rotateCandidates[0];
+  line2 = rotateCandidates[0];
 } else if (rotateCandidates.length > 1) {
   const rotIdx = Math.floor(Date.now() / ROTATE_MS) % rotateCandidates.length;
-  line3 = `${rotateCandidates[rotIdx]}  ${dim}(${rotIdx + 1}/${rotateCandidates.length})${RESET}`;
+  line2 = `${rotateCandidates[rotIdx]}  ${dim}(${rotIdx + 1}/${rotateCandidates.length})${RESET}`;
 }
 
 // ---------- output ----------
 const R = rule();
-const lines = [line1, line2, line3];
+const lines = [line1, line2];
 process.stdout.write(
   lines
     .filter(Boolean)
