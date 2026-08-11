@@ -13,6 +13,7 @@ Testado com Claude Code **2.1.221+**. O `statusline.mjs` lê campos do stdin (`r
 | `statusline/statusline.mjs` | Script Node do statusline (ver abaixo) |
 | `settings.example.json` | Trecho representativo do `~/.claude/settings.json` — hooks, plugins, prefs |
 | `skills/` | Minhas skills próprias — ver [seção abaixo](#skills-próprias) |
+| `docs/cadeia-session.md` | Como as três skills `session-*` se encaixam, com fluxogramas |
 | `install.sh` | Symlinka tudo isso pro `~/.claude` de uma máquina nova |
 
 ## install.sh
@@ -87,6 +88,8 @@ Autorais ou modificadas por mim o suficiente pra valer vendorizar aqui direto (n
 `session-handoff` é ortogonal às duas — atravessa fronteira de sessão quando o contexto acaba no meio do trabalho, gerando um prompt único e autocontido pra retomar em outra janela.
 
 Com mais de uma spec, a `session-build` deixa de construir e vira orquestradora: uma branch e um worktree por spec, uma sessão filha em cada, e ela conversa com todas por cross-session chat. O trabalho dela é ordem e colisão — worktree isola git, mas não isola o banco nem o runtime de edge function, que continuam sendo um só. Então ela serializa migration e deploy entre as filhas, manda uma esperar a outra quando existe dependência, e pode ordenar que duas se coordenem direto quando disputam a mesma função.
+
+**[docs/cadeia-session.md](docs/cadeia-session.md)** tem o desenho completo, com fluxogramas: a topologia do fork, os locks, os cinco níveis de dependência, o único deadlock que o design consegue produzir sozinho, e a assimetria entre o que o git desfaz e o que o banco não desfaz.
 
 ## Plugins e skills de terceiro que uso
 
