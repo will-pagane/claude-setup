@@ -17,7 +17,7 @@ A confusão comum é achar que as três são etapas de uma mesma esteira. Não s
 ```mermaid
 flowchart LR
     ideia([ideia]) --> build["/session-build"]
-    build --> branch["branches pushadas<br/>e verificadas"]
+    build --> branch["branches pushadas e verificadas"]
     branch --> rev{{você revisa}}
     rev --> fim["/session-end"]
     fim --> main([main atualizada, branch e worktree apagados])
@@ -48,14 +48,14 @@ O brainstorm é quem decide o tamanho do trabalho. Se a ideia cabe num spec só,
 
 ```mermaid
 flowchart TD
-    p["/session-build ‹ideia›"] --> br["brainstorming<br/>gates seus"]
+    p["/session-build ‹ideia›"] --> br["brainstorming · gates seus"]
     br --> n{quantas specs?}
 
     n -- "1" --> inline["esta sessão faz tudo em linha"]
     inline --> i1["plan → codex-review → SDD → verificação → push"]
     i1 --> o1([1 branch pushada])
 
-    n -- "2 ou mais" --> orq["esta sessão vira ORQUESTRADORA<br/>não escreve código"]
+    n -- "2 ou mais" --> orq["esta sessão vira ORQUESTRADORA · não escreve código"]
     orq --> f1["fork · spec-a"]
     orq --> f2["fork · spec-b"]
     orq --> f3["fork · spec-c"]
@@ -74,18 +74,18 @@ Worktree isola git. Não isola o banco de produção nem o edge runtime — esse
 
 ```mermaid
 flowchart LR
-    a["fork · spec-a<br/>worktree e branch próprios"]
-    b["fork · spec-b<br/>worktree e branch próprios"]
-    c["fork · spec-c<br/>worktree e branch próprios"]
+    a["fork · spec-a — worktree e branch próprios"]
+    b["fork · spec-b — worktree e branch próprios"]
+    c["fork · spec-c — worktree e branch próprios"]
 
     a -. "LOCK migration · espera" .-> o
     b == "GO" ==> o
     c -. "LOCK deploy · espera" .-> o
 
-    o{{"ORQUESTRADORA<br/>concede 1 lock por vez<br/>espera APPLIED antes do próximo GO"}}
+    o{{"ORQUESTRADORA — concede 1 lock por vez e espera APPLIED antes do próximo GO"}}
 
-    o ==> db[("1 banco de produção<br/>migrations · ledger remoto")]
-    o ==> rt["1 edge runtime<br/>deploy sobrescreve deploy"]
+    o ==> db[("1 banco de produção — migrations e ledger remoto")]
+    o ==> rt["1 edge runtime — deploy sobrescreve deploy"]
 ```
 
 A orquestradora existe para ser esse gargalo. A ordem de concessão vem da regra de colisão decidida no começo, não da ordem de chegada.
@@ -126,11 +126,11 @@ sequenceDiagram
     participant O as orquestradora
 
     F->>O: LOCK migration ‹arquivo›
-    Note over F: fica calada esperando GO<br/>parece ociosa, não bloqueada
-    Note over O: contexto compacta<br/>o pedido some do contexto
+    Note over F: fica calada esperando GO — parece ociosa, não bloqueada
+    Note over O: o contexto compacta e o pedido some
     Note over F,O: deadlock — ninguém errou, ninguém avança
 
-    O->>O: varredura dos ledgers a cada toque<br/>procura LOCK sem concessão
+    O->>O: varredura dos ledgers a cada toque, procurando LOCK sem concessão
     F->>O: LOCK migration ‹arquivo› (reenvio, ~10 tool calls)
     O->>F: GO
 ```
@@ -191,11 +191,11 @@ Git é descartável; banco de dados não. Existe um banco só, sem staging atrá
 
 ```mermaid
 flowchart LR
-    t1[código] --> t2[código + testes] --> t3[verificação] --> mig["migration<br/>(o mais tarde que o plano permitir)"] --> dep[deploy]
+    t1[código] --> t2[código + testes] --> t3[verificação] --> mig["migration — o mais tarde que o plano permitir"] --> dep[deploy]
 
     dep -. "falha aqui" .-> ab([branch abandonada])
     ab -- "git desfaz a branch inteira" --> zero([código volta ao zero])
-    mig -- "o banco não desfaz nada" --> fica["fica em produção<br/>relatório: Aplicado sem código"]
+    mig -- "o banco não desfaz nada" --> fica["fica em produção — relatório: Aplicado sem código"]
 ```
 
 Por isso a task de migration é ordenada o mais tarde possível, depois do código que depende dela estar escrito e verificado — e o relatório final tem uma seção só para nomear cada migration que ficou no banco com a branch abandonada. Essa seção vir vazia é uma afirmação, então só é feita depois de conferir.
@@ -216,16 +216,16 @@ Se você preferir nunca sair da orquestradora, ela pode entrar em cada worktree 
 
 ```mermaid
 flowchart LR
-    b[branch pushada<br/>revisada por você] --> v[verificação completa]
-    v --> m[migrations conferidas<br/>contra o ledger remoto]
-    m --> d[deploy verificado<br/>por re-download e grep]
+    b["branch pushada, revisada por você"] --> v[verificação completa]
+    v --> m["migrations conferidas contra o ledger remoto"]
+    m --> d["deploy verificado por re-download e grep"]
     d --> g{hard gate}
 
     g -- "algo vermelho" --> stop([para e reporta])
-    g -- "tudo verde" --> pr[pull request] --> mg["merge --merge<br/>nunca --squash"]
+    g -- "tudo verde" --> pr[pull request] --> mg["merge --merge, nunca --squash"]
 
-    mg --> pos[pós-merge:<br/>redeploy + types + pull]
-    pos --> lim[limpeza: worktree,<br/>branch local e remota]
+    mg --> pos["pós-merge: redeploy + types + pull"]
+    pos --> lim["limpeza: worktree, branch local e remota"]
 
     mg -. "o merge reverte o deploy de branch" .-> d
 ```
@@ -254,7 +254,7 @@ flowchart LR
         cv["a conversa: decisões e porquês"]
     end
 
-    ev --> bl["um bloco fenced<br/>passado: 2 a 4 frases<br/>estado atual: completo<br/>o que falta: completo<br/>como retomar"]
+    ev --> bl["um bloco fenced — passado em 2 a 4 frases · estado atual completo · o que falta completo · como retomar"]
     bl --> px([próxima sessão · memória zero])
 ```
 
