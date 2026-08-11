@@ -75,6 +75,7 @@ Autorais ou modificadas por mim o suficiente pra valer vendorizar aqui direto (n
 | Skill | Pra quê |
 |---|---|
 | `session-build` | Pega specs escritas numa sessão e leva até shipped: implementa, testa, abre PR |
+| `session-end` | Fecha uma branch pronta: verifica, aplica migration, faz deploy, registra pendências, abre PR, merge e limpa branch/worktree |
 | `session-handoff` | Gera um prompt único e autocontido pra continuar a sessão em outra janela/agente |
 | `code-ultragraph-review` | Review de codebase inteiro via grafo de conhecimento (graphify) — modo `--autopilot` roda pipeline autônomo: lê sinais do Supabase, aplica fix, verifica, abre PR |
 | `codex-review` | Loop adversarial Claude↔Codex revisando um plano de implementação antes de escrever código — modifiquei a versão original pro meu fluxo |
