@@ -74,11 +74,19 @@ Autorais ou modificadas por mim o suficiente pra valer vendorizar aqui direto (n
 
 | Skill | Pra quê |
 |---|---|
-| `session-build` | Pega specs escritas numa sessão e leva até shipped: implementa, testa, abre PR |
+| `session-build` | Leva uma ideia até branch pushada: brainstorma até virar spec, planeja, endurece o plano no `codex-review` e implementa. Uma spec roda inline; várias forkam uma sessão filha por spec, com a sessão atual orquestrando |
 | `session-end` | Fecha uma branch pronta: verifica, aplica migration, faz deploy, registra pendências, abre PR, merge e limpa branch/worktree |
 | `session-handoff` | Gera um prompt único e autocontido pra continuar a sessão em outra janela/agente |
 | `code-ultragraph-review` | Review de codebase inteiro via grafo de conhecimento (graphify) — modo `--autopilot` roda pipeline autônomo: lê sinais do Supabase, aplica fix, verifica, abre PR |
 | `codex-review` | Loop adversarial Claude↔Codex revisando um plano de implementação antes de escrever código — modifiquei a versão original pro meu fluxo |
+
+### A cadeia session-*
+
+`session-build` vai da ideia até branch pushada e verificada, e **para ali de propósito** — não abre PR, não mergeia. Você revisa. Depois `session-end` fecha cada branch: verifica de novo, aplica migration, faz deploy, registra pendência, abre PR, mergeia e limpa branch e worktree. Quem constrói não é quem mergeia, e a fronteira é você.
+
+`session-handoff` é ortogonal às duas — atravessa fronteira de sessão quando o contexto acaba no meio do trabalho, gerando um prompt único e autocontido pra retomar em outra janela.
+
+Com mais de uma spec, a `session-build` deixa de construir e vira orquestradora: uma branch e um worktree por spec, uma sessão filha em cada, e ela conversa com todas por cross-session chat. O trabalho dela é ordem e colisão — worktree isola git, mas não isola o banco nem o runtime de edge function, que continuam sendo um só. Então ela serializa migration e deploy entre as filhas, manda uma esperar a outra quando existe dependência, e pode ordenar que duas se coordenem direto quando disputam a mesma função.
 
 ## Plugins e skills de terceiro que uso
 
