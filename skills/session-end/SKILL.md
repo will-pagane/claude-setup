@@ -34,7 +34,9 @@ Read the project's `CLAUDE.md` / `AGENTS.md` at Step 0 and obey it over any defa
 
 Everything downstream reads from this inventory. Build it once; never re-derive it from memory.
 
-1. **Where am I.** `git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`. If the current branch is `main`/`master`, **stop** — there is nothing to close out.
+1. **Where am I.** `git rev-parse --show-toplevel`, `git branch --show-current`, `git worktree list`. If the current branch is `main`/`master` **and there is no worktree to close**, stop — there is nothing here.
+   **But being on the default branch is the correct starting state for an orchestrator closing several branches**, so do not read that stop as an abort. `git worktree list` shows the branches waiting; enter each one (`EnterWorktree` with its path) and run this skill through, once per branch, returning with `ExitWorktree` between them. A session that ran a multi-fork build can close every branch itself — one orchestrator did exactly this for five, in sequence, with no refusal.
+   **Inside a worktree, compound bash is refused**: no `cd X && …`, no redirects, no `for` loops, and no `-C` aimed at a different worktree. Every command becomes simple and one per call. Nothing announces this, and it changes how each step below is written.
 2. **Base and diff.** `BASE=$(git merge-base HEAD origin/main)`; then `git diff --name-only $BASE...HEAD` and `git status --porcelain`. Record both.
 3. **Derive from the diff:**
    - migration files (`supabase/migrations/**` or the project's equivalent),
@@ -63,6 +65,12 @@ Note in the ledger that this deploy will likely be **undone by the merge** (Step
 ## Step 4 — Pendings
 
 Collect what the session leaves behind: deferred review findings, cut scope, TODOs added to the diff, verification only a human can do, anything parked with a ruling. Sources are the session ledger and the diff — not recollection.
+
+**When the work was built by someone else — a fork, an earlier session — ask for density explicitly, or the default answer is useless.** Left unasked, a hand-off reports *"found X, deferred"*. Asked in these words, it reports entries that paste straight in. Use the phrasing that worked, close to verbatim:
+
+> *"Send me the parked findings with enough density that I can transcribe them straight into the pendings file without reopening the investigation — file and line, the number you measured and how you measured it, the shape of the fix, and the exposure that stays open meanwhile."*
+
+That request produced **13 items transcribed almost directly** in a five-branch close-out. And require one more field the phrasing above does not cover: **any proof that cannot be reproduced**. An equivalence established before a migration that now makes the old path raise is not re-runnable, and an entry that does not say so sends the next reader chasing a break that is not there.
 
 **Nothing deferred → skip this step entirely.** Do not create an empty file, do not invent filler items.
 
@@ -101,7 +109,17 @@ Hard-gated. Re-check before merging: lint/build/test green, every branch migrati
 
 Then `gh pr merge --merge` (project policy; **never `--squash`** on a history-preserving repo). **Do not pass `--delete-branch`** — the worktree still has the branch checked out and the delete will fail or strand the worktree.
 
-Confirm the merge landed: `gh pr view <n> --json state,mergedAt`. `MERGED` is the only acceptable state before Step 8.
+**`gh pr merge` prints nothing on success**, so silence is not evidence either way. Confirm with **`git branch -r --contains <sha>`** rather than `gh pr view --json state`: in a live run the `gh` call was refused by a classifier twice while the git query answered every time. `MERGED` — however you establish it — is the only acceptable state before Step 8.
+
+### Merging `main` into the branch trips a three-step trap, and the middle step looks correct
+
+Hit in a real close-out, worth walking before you meet it:
+
+1. The merge brings a **hook-owned generated file** (typically `types.ts`) into the index, which **drops the gate that normally keeps it off the branch** — the gate only fires on a staged change you made, and this one arrived by merge.
+2. `.gitattributes` usually marks that file `merge=ours`, so the "correct" resolution is to keep the branch's version. **This is the step that looks right and is not.**
+3. Because the code arriving from `main` calls RPCs the branch's older generated types do not know, keeping the branch version **breaks the build** — a genuine `TS2345`, not an artefact.
+
+The way out is to **regenerate the file locally and never commit it**. Then remember at Step 9 that the tree is now deliberately dirty.
 
 ## Step 8 — Post-merge sync
 
@@ -119,6 +137,10 @@ Only after Step 7 confirmed `MERGED`.
 2. Confirm nothing is stranded: `git log <branch> --not origin/main --oneline` returns empty, and `git -C <worktree> status --porcelain` is clean. Non-empty → **stop and report**; never delete unmerged commits or uncommitted files.
 3. `git worktree remove <dir>` → `git branch -d <branch>` (lowercase `-d`, which refuses unmerged work) → `git push origin --delete <branch>`.
 4. Confirm: `git worktree list` and `git branch -a` no longer show it.
+
+**`git worktree remove` refuses a dirty tree, and Step 7 may have made it dirty on purpose.** The regenerated generated file is left uncommitted deliberately, so this is exactly where the temptation to reach for `--force` appears — and `--force` here discards work without reading it. Instead, `git checkout` the *generated* file (only that one, and only because it is reproducible by a command) and then remove the worktree normally. If anything else is dirty, stop and report: that is the case this step exists to protect.
+
+**A remote branch already deleted by the host is not a failure.** Many forges delete the head branch on merge, so `git push origin --delete` answers `remote ref does not exist`. That is the expected outcome of an already-completed cleanup — confirm with `git branch -r` and move on.
 
 If the session ran directly on the main checkout with no worktree, steps 1 and 3's `worktree remove` simply do not apply — switch to `main` and delete the branch.
 
