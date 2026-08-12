@@ -44,6 +44,18 @@ Every round still resumes the **same** Codex thread (`codex exec resume "$THREAD
 
 If a caller is orchestrating (a `session-build` fork), report the stall over its channel as information — never as a request for permission.
 
+**Observed once, for whoever wonders whether past round 5 is just noise.** Across three plans reviewed under this mode: one approved at round 5, one at round 9, one at round 10, with zero stalls. Rounds 6–9 of the second produced 8 new findings; rounds 6–10 of the third produced 18. So the tail was not the loop spinning — it was the review still working. One run is thin evidence, and a plan that approves at round 3 is not worse for it; the point is only that hitting 5 without approval is not a sign the argument is exhausted.
+
+### The re-copy trap — the most common cause of a stall
+
+**Revise the artifact Codex re-reads. Never regenerate it from a source that lacks your rebuttals.**
+
+`$RUN_DIR/PLAN.md` is what Codex re-reads each round, so it is what must accumulate the argument. A caller that keeps a canonical plan elsewhere — `session-build`'s forks keep theirs under `docs/superpowers/plans/` — is tempted to re-copy that file into `PLAN.md` at the top of every round. That copy **destroys everything written into `PLAN.md` since the last one**, and the first casualty is the "considered and rejected because …" section, which is precisely the part meant to answer Codex.
+
+The failure is invisible from the inside: Claude answers the objection every round, Codex never sees the answer because it re-reads a document the copy just reverted, and the same objection returns forever. Confirmed from inside a live run — it was the direct cause of a plan that bounced from round 3 to round 6.
+
+Copy the plan in **once**, at kickoff. After that, revise `PLAN.md` in place and copy it back out at the end. If a caller genuinely must re-copy each round, its rebuttal section has to live in the **canonical** file so the copy carries it in rather than wiping it.
+
 **Parallel-safety (why the run dir exists):** every artifact this skill touches is timestamped and scoped under `RUN_DIR`, so multiple codex-review sessions — or a fan-out of per-wave reviews — run concurrently without stepping on each other's `PLAN.md`, log, or verdict file. Never write these artifacts to the repo root or to a shared `/tmp` path.
 
 ## Flow

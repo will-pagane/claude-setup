@@ -40,8 +40,10 @@ Human gates — only these:
 This skill runs inside real projects that carry their own rules. Read the project's `CLAUDE.md`/`AGENTS.md` at Step 2 and obey it over any default here. Concretely:
 
 - **Never bypass a gate.** Pre-commit/pre-push hooks (migration checks, collision detection, ledger, branch policy) run — never `--no-verify`, never `--force`. A failing gate is an escalation, not an obstacle.
+- **Read the gate's resolution predicate; never trust its help text.** A gate that prints a suggested fix is stating an intention, not a proof — and the two drift. Observed: a collision gate whose failure message suggested copying files from another ref, while the condition it actually tested was branch *ancestry*. Following the printed advice left it exactly as red, with no hint why, and the suggested command wrote the index as a bonus. Open the gate script, find the line that decides pass/fail, and satisfy **that**.
 - **Deploy through the project's wrapper** (e.g. `scripts/sb-deploy.sh`), never a bare deploy command that skips the gate.
 - **Migrations follow the project's discipline** — file-first via the migration CLI, required preflight evidence on any redefinition, committed with the code that needs it.
+- **Expect the migration tool to refuse because of *other people's* migrations, and never take its suggested way out.** Where concurrent sessions apply from unmerged branches, the remote ledger holding entries with no local file is the **normal** state, not a fault — and the CLI may refuse to push at all until the local directory accounts for them. The remedies such tools suggest are typically destructive: marking someone else's applied migration as reverted, or pulling their in-flight schema down as if it were yours. Do neither. The guard reads the **directory on disk**, not git history, so: restore the peer's migration files into the worktree with a command that does **not** write the index (`git restore --source=<ref> --worktree -- <paths>`, never `git checkout`), dry-run the push and confirm it names **only your own** migration, apply, then delete the borrowed files immediately. Put this in the dispatch prompt — discovering it costs a fork a blocked task and an escalation.
 - **Generated/hook-owned files** are not committed on a branch when the project forbids it.
 - **Docs policy.** Specs are docs. If the project routes docs straight to the default branch, commit them there — not on a feature branch.
 
@@ -210,7 +212,13 @@ REASSIGN <surface> TO <fork name>   # you no longer own this
 
   The rule triggers on **any change the peer made**, not just a deletion: rewrite, stub, guard, removal — the mechanism is identical. And the non-deletion cases are the **dangerous** ones. A resurrected deleted file comes back *broken* and announces itself. A reverted **neutralisation** comes back **working**: if the peer's change replaced a live pipeline with an authenticated no-op, a stale deploy silently rearms the original pipeline, fully functional, with nothing failing to signal it. The whole point of the branch is undone and every check still passes.
 
-  So whenever two forks' deploy sets intersect at all — not only when they edit the same function — **whoever deploys second merges the other's branch first**, then re-derives the set. Never hand-count the set to argue the intersection is empty; let the project's own tooling derive it, since that is what will actually run.
+  So whenever two forks' deploy sets intersect at all — not only when they edit the same function — **someone merges before deploying**, then re-derives the set. Never hand-count the set to argue the intersection is empty; let the project's own tooling derive it, since that is what will actually run.
+
+  **Who merges is not "whoever the gate blocked", and getting it backwards is destructive.** The gate fails for whoever runs it, but the fix usually belongs to the *other* fork, so the blocked one's instinct — merge the peer to unblock myself — is the trap. Merging drags the peer's **unfinished** work into your tree, and since the set is derived from that tree, its consumers land in **your** deploy set: you publish their unverified code under your verification, which is worse than the collision you were fixing.
+
+  Ask instead: **which fork still holds the stale import edge?** A set is computed from an import graph, and the fork whose graph is out of date is the one whose set is wrong. If fork A already dissolved the edge (deleted or rewrote what imported the shared module), A's set is correct and B's is inflated by a graph that no longer exists — so **B merges, B's set shrinks, and A deploys without ever containing B**, preserving merge order.
+
+  And look for the cheap exit first: **emptying the intersection is a legitimate resolution**, and collision gates typically short-circuit on an empty intersection *before* testing anything harder. Nobody looks for it, because "collision" reads as "someone must merge". Often the peer merging shrinks its own set until the overlap is gone, and nothing else is needed.
 
 - **Assert on behaviour, not on file layout.** A post-merge check written against one plan shape breaks when the plan changes shape, and it breaks *green-looking*: "the directory must not exist" is correct while the plan deletes and wrong the moment the plan switches to stubbing, failing on a perfect merge. Assert what the deployed code must now *do* — the body contains the neutralised marker, the dead module is no longer imported — so the check survives the plan changing its mind.
 - **A collision the orchestrator cannot resolve by ordering** — two forks that genuinely need to edit the same function body — is resolved by `COORDINATE WITH`: the two forks agree on one owner and one merge point, report the agreement, and the orchestrator records it in the ledger. If they cannot agree, escalate to the user.
@@ -221,7 +229,14 @@ REASSIGN <surface> TO <fork name>   # you no longer own this
 
 **Releases.** When a fork reports `PUSHED`, immediately: create any worktree that was waiting to branch from it, send `GO` to every fork holding on it, and log the release.
 
-**Escalations stop the whole run**, not just one fork: a task the fork could not resolve, a red verification, an unapplied migration, an unresolvable collision. **A codex-review that has not approved yet is NOT one of them** — it runs uncapped and reports a stall as information, never as a request. Report to the user with the fork, the finding, and the state of every other fork.
+**An escalation stops the forks it affects — and only those.** Report to the user with the fork, the finding, and the state of every other fork; then scope the halt to the blast radius:
+
+- **Stop the whole run** when the finding is global: the shared database left inconsistent, a Step 2 ruling invalidated, a dependency that no longer holds, or anything where the user's answer changes what the other forks should build. Holding everyone is right when continuing would mean building on a premise under review.
+- **Stop only the affected fork** when the finding is local to it — its own gate, its own failing task, its own blocked deploy. Freezing a peer over something with no relationship to it burns wall-clock for nothing, and the peers are exactly the parallelism the run exists to buy.
+
+When in doubt, ask what the *other* forks would do differently if the user answered the question. If the answer is "nothing", they keep working.
+
+**A codex-review that has not approved yet is NOT an escalation at all** — it runs uncapped and reports a stall as information, never as a request.
 
 **How a stop actually stops.** Send `HOLD` to every fork, to take effect **at its next phase boundary** — never mid-phase. A fork currently holding a migration or deploy lock **finishes that operation and releases the lock first**: a half-applied migration or a half-deployed function set is worse than any delay the stop was trying to buy. A fork mid-implementation finishes its current plan phase, commits it, and holds. Then report the exact state of each fork: what it completed, what it holds, what it was about to do.
 
