@@ -53,6 +53,16 @@ CHANNEL
   PUSHED. A commit per checkpoint runs the repo's hooks over and over on a machine already
   saturated by your peers, and buries your real commits.
 
+FREEZE — if you are ever told a peer has merged your branch, or to hold for a peer's push
+  Then you make NO COMMITS until released. Not "no code commits" — none at all: docs, ledger,
+  .gitignore, a typo fix. The gate your peer depends on compares HEADs, so the CONTENT of your
+  commit is irrelevant and the most harmless one is exactly as fatal as the riskiest. Do not
+  invent an exception; the exception everyone invents is "surely recording this in the ledger is
+  fine", and that is the commit that has already broken a real run.
+  You MAY still churn the working tree freely — restoring a peer's files to unblock your own
+  migration, then deleting them. That does not move HEAD and is not a freeze violation. Note it
+  in your ledger file (which you are writing, not committing) so it does not look like one.
+
 FIRST ACTION — AND THE RULE THAT REPLACES IT
   Do NOT call EnterWorktree. It will refuse you: your working directory is the repository root,
   and this build only switches BETWEEN worktrees, never into the first one from the launch

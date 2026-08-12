@@ -241,6 +241,21 @@ So, before ordering any merge between forks:
 3. **Map which gates each path actually traverses before concluding a fork is stuck.** Deploy, push and migrate are different paths through different gates. In the observed case deploy and push were both closed while *apply* stayed open, because the migration CLI never runs the collision gate — and that open path is what unblocked the run. "This fork has no move" is a claim to verify per path, not per fork.
 4. **Diagnose by provenance, never by the gate's list.** Once a peer contains you, everything you declared appears in its set, so the listing looks like a real conflict. Trace which file actually *declares* each listed object. Without that, the natural reading is "there is a genuine conflict" and the natural reaction is to merge — the exact move that deepens the hole.
 
+**Green is a timestamp, not a property.** An ancestry predicate compares **HEADs**, not bodies of work, so its answer is true *at the instant it was measured* and silently false afterwards. Nothing notifies you. In the observed run the merged fork went green, the peer made **one commit**, and it was red again with no one aware — and the commit that broke it was a **ledger commit**. Documentation. Not code, not a migration, not config. *The least suspicious commit of all is the one recording why you stopped committing.*
+
+This is not a gate lying, which is the failure the gate-trust rules cover. It is a **true measurement going stale**, and it needs its own discipline:
+
+- **Measure immediately before use, never earlier.** Record the gate's exit code right before the push or deploy it authorises — that is the only moment it means anything. One collected before a batch of other checks, or "earlier in the phase", authorises nothing.
+- **Re-confirm containment at the moment of use.** *"I merged, therefore I am clean"* is false as soon as the peer breathes. Verify the ancestry again; do not trust that the merge happened.
+- **Once a merge between forks is ordered, the merged fork FREEZES — and the freeze is absolute.** Not "no code commits": **no commits.** Docs, ledger, `.gitignore`, a typo fix. The predicate compares HEADs, so **the content is irrelevant** — the most harmless commit of the run is exactly as fatal as the riskiest. State it with the cases named, and state no exceptions: whatever exception the skill lists is the one someone will reach for, and the exception people invent unprompted is *"surely the paperwork is fine"*.
+
+  It is not. In the observed run the fork that broke the window was the same fork that had **warned about it one message earlier** — it flagged the instability, then committed the warning to its ledger. Its own conclusion is the maxim worth keeping: **a freeze that permits "just the paperwork" is not a freeze.** The lesson is not that the rule was unknown.
+
+  This is where the ledger cadence rule stops being an economy and becomes a **correctness requirement**: during a containment window, *write to the file and do not commit* has nothing to do with saving hook runs.
+
+- **The other half, without which the freeze becomes paralysis: working-tree churn is allowed; commits are not.** A frozen fork may still need to move a great deal on disk — restoring a peer's migration files into the directory so its own migration can be applied, then deleting them again. That churns the tree heavily and **does not move `HEAD`**, so it is fully compatible with the freeze. Say both halves in the same breath, or a fork that has been told to freeze will stop touching the disk out of caution and block on work it was always free to do. Worth writing into its ledger deliberately, too: seven of someone else's migrations appearing during a declared freeze looks like a violation and is not.
+- **Design the closing sequence as a commit-free window.** The shape that works: peer pushes and freezes → container merges → container runs its gates → container pushes, **with no commit at all between the merge and the push**. A commit from either side inside that window reopens it. If the skill has two forks contain each other, this only closes when it is genuinely the last thing each of them does.
+
 **The resolution pattern that worked:** the **containing** fork deployed the **contained** fork's targets. The bodies were byte-identical, the container's gate was clean, and it was substantively the same deploy. The contained fork deployed nothing, merged nothing, and bypassed nothing; it resumed at the next stage through the still-open path.
 
 **And three tempting moves that were refused, each for a reason worth keeping:** editing the deploy wrapper to get past its own gate; having the contained fork merge the container, which turns the gate green by making true the very thing it guards against; and having the container apply the peer's destructive migration, when a destructive migration should be pushed by the session that can actually diagnose it.
@@ -320,6 +335,10 @@ The third commit carries everything the per-update commits would have, because t
 
 The residual risk is honest and small: a hard session death plus another session rebasing over the working tree could lose uncommitted lines. Cheaper than the certain cost of committing every line.
 
+**And during a containment window this stops being an economy and becomes correctness.** When a fork has been merged by a peer and is holding for that peer's push, *any* commit it makes invalidates the peer's ancestry check — a ledger commit does it just as effectively as a code commit. See *Green is a timestamp, not a property* in Step 5.
+
+**Relay this rule to the forks, not just to yourself.** It reads like housekeeping, which is exactly why it gets adopted by the orchestrator and never passed on — and that omission is what broke a live run. Anything you decide after dispatch reaches a fork only over the wire, and the changes most likely to be forgotten are the ones that look like mere tidiness rather than a ruling.
+
 ## Common mistakes
 
 | Mistake | Reality |
@@ -332,7 +351,10 @@ The residual risk is honest and small: a hard session death plus another session
 | "Then the fork calls `EnterWorktree` and it is pinned" | It is refused — first entry from the launch directory does not work in this build, for forks or the orchestrator. Isolation is absolute-path discipline plus a `git -C … branch --show-current` check before every commit. |
 | "A fork sits and waits for my `GO`" | It is one-shot; its turn already ended at the manifest. Every directive is a fresh `SendMessage` that revives it. |
 | "Forks run SDD like I would" | They cannot spawn subagents — hard rule, not overridable. A fork implements inline, one task at a time. Only an `N = 1` inline build uses SDD. |
-| "Forks inherit context, so they know the rulings" | They inherit the conversation, not decisions you make after forking. Directives go over the wire. |
+| "Forks inherit context, so they know the rulings" | They inherit the conversation, not decisions you make after forking. Directives go over the wire — including the ones that look like housekeeping, which are the ones you will forget to send. |
+| "The gate went green, so I am clear" | Green is a timestamp. An ancestry check compares HEADs, and the peer's next commit — a ledger commit will do — makes it false with no notification. |
+| "Only code commits can break a containment window" | A docs or ledger commit moves HEAD exactly as well. A freeze that permits "just the paperwork" is not a freeze. |
+| "Frozen means I should not touch anything" | Frozen means no commits. Working-tree churn is free — `HEAD` is what the predicate reads. |
 | "The plan is in the codex run dir, close enough" | Implementation reads `docs/superpowers/plans/`. Copy the converged plan back or you ship the un-hardened one. |
 | "SDD said to finish the branch" | `finishing-a-development-branch` opens PRs and merges. Forbidden here. Verify and push instead. |
 | "The user can run `/session-end` in the orchestrator" | It assumes the worktree is the cwd, and no session in the run is inside one. The user launches a session **from** the worktree directory. |
@@ -361,6 +383,8 @@ The residual risk is honest and small: a hard session death plus another session
 - About to issue a `MERGE` between forks without having read the direction of the blocking gate's predicate, or without deciding in the same breath which fork loses the ability to deploy.
 - About to order a merge that pulls in a peer's **unapplied** migration.
 - About to declare a fork stuck without checking each path separately — deploy, push and migrate pass through different gates, and one may still be open.
+- About to act on a gate result you measured before doing something else. Re-measure immediately before the push or deploy it authorises.
+- About to let a merged fork commit anything — ledger included — while its peer is still holding an ancestry check open.
 - About to create a total-dependency branch before its dependency reported `PUSHED`.
 - About to put two sessions in one worktree, for any reason.
 - About to grant a `GO` without sweeping the ledgers for an older ungranted `LOCK`.
