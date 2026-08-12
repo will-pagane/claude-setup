@@ -132,6 +132,10 @@ For a **total** dependency, the base ref is the dependency's branch instead — 
 
 Then bootstrap each worktree the way the project requires (dependency install, and any per-checkout linking such as `npm run link:worktree` — a fresh worktree has none of the previous one's local state).
 
+**Bootstrapping is a correctness step, not a convenience — an unbootstrapped worktree has NO GATES AT ALL, silently.** Hook managers commonly point `core.hooksPath` at a **relative** directory that their own install script creates (`.husky/_` and friends). A worktree that never had its dependencies installed therefore resolves that path to a directory that does not exist — and git runs **no hooks and reports nothing**. Not one gate skipped: every gate, quietly, while commits and pushes succeed and nothing anywhere goes red. Verified: `core.hooksPath=.husky/_`, present in bootstrapped worktrees, absent otherwise, with `.git/hooks/` empty so there is no fallback.
+
+This is the most complete false green the run can produce, and this skill's own Step 3 is what creates the opportunity. So **verify the hooks exist before dispatching**, not just that the install exited 0 — one `ls` per worktree — and treat a fork reporting "all gates green" from an unbootstrapped worktree as reporting nothing at all.
+
 ### Forks cannot enter their worktree — plan around it
 
 `git worktree add` does **not** pin a child session's writes, and **`EnterWorktree` will not fix that for a fork.** Observed and reproduced by three independent forks: calling it with the correct absolute `path` is refused with
@@ -429,6 +433,7 @@ The residual risk is honest and small: a hard session death plus another session
 | "The negative grep returned one hit, so it failed" | Read the hit. Once it was the warning comment defending the very rule being checked. |
 | "I ran it and it succeeded, so it works" | Ask whether the run *reached* the change. A service-role call to a function gated on caller identity returns at the guard and never plans the body. |
 | "Every gate I ran is green, so the branch is clean" | Which of them could have gone red on *this* claim? A type error is invisible to a test suite and to a bundler build; 1459 green tests were irrelevant evidence, not weak evidence. |
+| "The commit hooks passed in my worktree" | Did the worktree ever get bootstrapped? A missing `core.hooksPath` directory means git runs no hooks and says nothing. |
 | "The push command exited 0" | Did you pipe it? `git push \| tail` returns tail's status. And `PIPESTATUS` is empty under zsh — the fix fails as silently as the bug. |
 | "The output says everything passed" | Then read the exit code, which is a separate claim. All-green output with a non-zero status is what teaches a team to ignore red. |
 | "Nothing was unexplained, so nothing diverged" | Was the list of acceptable differences derived *before* the comparison? Written after, `unexplained = 0` is a tautology. |
@@ -469,6 +474,7 @@ The residual risk is honest and small: a hard session death plus another session
 - About to escalate a silent fork without having looked at the machine's load average.
 - About to grant a second `verify` lock, or to let a fork run the full suite while another is running it.
 - About to sweep for pending locks from a checkout where the fork ledger files do not exist.
+- About to dispatch a fork into a worktree whose hook directory you have not seen with your own eyes.
 - About to grant a migration lock without having the holder re-stamp its filename to current UTC.
 - About to report a failure count from a suite you have run only once under a loaded machine.
 - About to let a merged fork commit anything — ledger included — while its peer is still holding an ancestry check open.
