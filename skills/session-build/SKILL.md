@@ -86,7 +86,7 @@ This is the orchestration design. Do it before any branch exists.
    - **Entangled** — the two would have to edit the same code at the same time to make sense of each other. That is not a dependency, it is a decomposition error: **fold them back into one spec** with one fork, which implements them serially. Two agents in one working directory is never the answer.
 
    **The graph must be acyclic.** Walk it and say so explicitly. Any cycle — A needs B and B needs A, directly or through a third spec — is `Entangled` by definition: fold the cycle's members into one spec. A cycle left in the graph deadlocks the run, and it deadlocks it *late*, after both forks have already planned and built.
-3. **Surface pre-scan.** From the specs alone, list per spec: tables and migrations, edge/serverless functions, shared modules, frontend routes/hooks. Intersect them. Every non-empty intersection gets a written ruling now:
+3. **Surface pre-scan — a hypothesis, not the ruling.** From the specs alone, list per spec: tables and migrations, edge/serverless functions, shared modules, frontend routes/hooks. Intersect them, and rule on every non-empty intersection now. But know its limit: **a spec says what to build, not which files the build will touch.** The collisions it misses are the ordinary ones — a shared hook two plans both decide to edit, which is invisible until both plans exist. The pre-scan buys early rulings; the manifest intersection at Step 5 is what binds, and it *will* find surfaces this step could not have seen. Plan to re-rule there rather than treating it as a formality.
    - **Same edge function in two specs** → assign it to exactly one fork. The other fork's change to that function either moves into the owner's plan, or waits for the owner to push and then merges the owner's branch before touching it. Two forks deploying the same function from different branches means the second deploy silently reverts the first.
    - **Same table in two migrations** → order them. The later one is written against the earlier one's schema, and is applied only after the earlier is confirmed applied.
    - **Same source file** → prefer moving the change into one spec's plan. If genuinely both, order them and make the second fork merge the first's branch.
@@ -206,6 +206,7 @@ REASSIGN <surface> TO <fork name>   # you no longer own this
 
 - **Only one fork applies migrations at a time.** A fork requests `LOCK migration <files>`, the orchestrator grants `GO` to exactly one, and waits for `APPLIED` before granting the next. Where two migrations touch the same table, the grant order is Step 2's ruling, not arrival order.
 - **Only one fork deploys at a time**, same protocol, and a function owned by another fork is never deployed without that owner's `DONE` plus a `MERGE` directive.
+- **Ordering two deploys does not resolve a deploy-set collision — only merging does.** Deploy-set derivation typically reads the **working tree**, not `HEAD`: a fork whose tree still contains a file the other fork deleted will **resurrect that file** in its own deploy, and swapping who goes first just inverts which one gets resurrected. So whenever two forks' deploy sets intersect at all — not only when they edit the same function — **whoever deploys second merges the other's branch first**, then re-derives the set. Never hand-count the set to argue the intersection is empty; let the project's own tooling derive it, since it is what will actually run.
 - **A collision the orchestrator cannot resolve by ordering** — two forks that genuinely need to edit the same function body — is resolved by `COORDINATE WITH`: the two forks agree on one owner and one merge point, report the agreement, and the orchestrator records it in the ledger. If they cannot agree, escalate to the user.
 
 **Liveness.** A fork that has sent nothing across a whole phase gets pinged. Two pings unanswered → read its ledger file and its worktree's `git log` directly, and escalate to the user with what you found. Silence is never treated as progress.
@@ -274,6 +275,8 @@ Context does not survive compaction; the ledger does. On resume, trust the ledge
 | "SDD said to finish the branch" | `finishing-a-development-branch` opens PRs and merges. Forbidden here. Verify and push instead. |
 | "The user can run `/session-end` in the orchestrator" | It assumes the worktree is the cwd, and no session in the run is inside one. The user launches a session **from** the worktree directory. |
 | "Migrations and deploys come after implementation" | They are tasks *in* the plan, with their own verification, executed under an orchestrator lock. |
+| "Step 2's pre-scan found the collisions" | It found the ones visible in the specs. A shared hook two plans both edit is invisible until both plans exist — the manifest intersection is what binds. |
+| "I ordered the two deploys, so they cannot clash" | Deploy sets are derived from the working tree, not `HEAD`. The second fork resurrects whatever the first deleted, and reordering only swaps who does it. The second one merges the first's branch before deploying. |
 | "Push triggers the deploy" | Verify by re-downloading the deployed function. Bulk redeploys silently fail. |
 | "The fork's report says tests passed" | The branch owner runs the full suite itself before pushing. Nothing else counts. |
 | "A quiet fork is a working fork" | Ping it, read its ledger and its git log, escalate. Silence is not progress. |
@@ -287,6 +290,7 @@ Context does not survive compaction; the ledger does. On resume, trust the ledge
 - About to start implementation with two forks on the same branch, or with the orchestrator writing code.
 - About to grant two migration or deploy locks at once.
 - About to let a fork deploy an edge function another fork owns.
+- About to grant a second deploy lock on an intersecting deploy set without the later fork merging the earlier one's branch first.
 - About to create a total-dependency branch before its dependency reported `PUSHED`.
 - About to put two sessions in one worktree, for any reason.
 - About to grant a `GO` without sweeping the ledgers for an older ungranted `LOCK`.
