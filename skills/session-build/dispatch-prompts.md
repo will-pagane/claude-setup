@@ -51,6 +51,14 @@ CHANNEL
   "no pending locks" while yours sits there.
   You will NOT be able to commit that file — it is on the default branch, which is closed to you.
   That is expected: the orchestrator commits it. Write it, never try to commit it.
+  FORMAT IS MANDATORY, because the orchestrator greps this file. Every checkpoint goes in
+  VERBATIM, one per line, at the START of its line — READY / PLAN / CODEX / SURFACES / TASK /
+  LOCK / APPLIED / DEPLOYED / PUSHED / BLOCKED / WAITING / DONE. Put prose underneath the line,
+  never in place of it. A ledger written as prose makes the pending-lock sweep return zero, and
+  zero is indistinguishable from clean — that has already hidden a real LOCK in a live run.
+  Stamp each line with the time you wrote it, and when you record a measurement (a branch head,
+  a gate result, a count), record WHEN you measured it. A reading with no timestamp is worthless
+  to whoever reads it later, because they cannot tell a fact of the run from a fact of that minute.
 
 YOUR PEERS — you can address them directly
   <spec-slug> → <agentId>            (one line per peer fork in this run)

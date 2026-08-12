@@ -104,6 +104,8 @@ This is the orchestration design. Do it before any branch exists.
 
    Answer it by hand, because no tool will: cross the shared-module imports on the **neighbouring branches** against the functions your own specs deploy, and record the intersection — empty or not. The orchestrator that did exactly this reported it as the only thing its pre-scan produced, without having recognised at the time that it was the step that mattered.
 
+   **And feed the answer back into the decomposition, not just into the collision rulings.** The question is not *"do these specs share a file?"* but *"**does the import graph join them?**"* — and when it does, they are not two deliverable specs with a surface to arbitrate. **They are one.** An orchestrator that classified two specs as `Independent` on "no shared surface" watched them fuse into a single deploy unit anyway, and every hour of containment choreography that followed — three merge laps and a deadlock — descended from that one line. Its own verdict in hindsight: it would have proposed **two** specs instead of three, merging the pair the graph had already merged. Splitting what deploys together buys no parallelism; it buys a merge order.
+
    Everything else waits for the manifests. Ruling on a hypothesis costs a round and produces decisions that do not survive contact with the plans.
    **Ask the transitive question explicitly, before any plan exists:** *does any spec touch a bundled shared module?* If one does, every consumer of that module is contested surface for this run — mark them all now, including consumers another spec only intends to **delete**. This is the collision that survives both the pre-scan and the Step 5 manifest intersection, because both compare **files** while the conflict lives in the **deploy set**, one level of transitivity away. Skipping this question is what produced the worst failure this skill has recorded.
 
@@ -346,6 +348,20 @@ When in doubt, ask what the *other* forks would do differently if the user answe
 
 ## Step 6 — Close-out report
 
+### The close-out is a handoff, not an ending
+
+**Say this to the user, and believe it yourself.** This skill draws a one-way funnel — verify, push, report, done — and that shape is a lie about the work. Measured in a run that reached the end of it: the close-out went out with every branch pushed and everything green, the user then ran the app and **found ten defects in about twenty minutes, two of them security**. What followed was two more production migrations, a deploy redone twice, and roughly twenty commits.
+
+**None of the ten was reachable by any mechanism this run spent its time on** — not 5, 9 and 10 rounds of adversarial plan review, not eleven gates, not ~1,500 tests. The capture rate of the entire automated funnel, against what a human found by opening the screen, was **zero**.
+
+That is not an argument against the machinery: the same machinery caught a dead-code type error and a migration that aborted in production, and nothing human was going to find those. It is an argument about **disjoint classes**. So:
+
+- **`PUSHED` is not a point of no return.** It is the moment the branch becomes good enough for someone to look at.
+- **The close-out is the handoff to the only reviewer who sees the class of defect that nothing automated sees.** Frame it that way in the report — a user who reads "done, all green" opens the app expecting confirmation, and a user who reads "this is now worth your twenty minutes; here is what I could not check" opens it hunting.
+- **Reopening after close-out is routine, not failure.** Expect the cycle to come back, and expect the return to be highest exactly there. A skill that presents the funnel as terminal teaches its reader to treat the most valuable phase as an embarrassment.
+
+
+
 Compose from the ledger — never from memory — and print inline, in the user's language:
 
 - **Specs** — one line per spec: file path, and the one-sentence design it captured.
@@ -403,6 +419,22 @@ The asymmetry is the argument: the relative arrangement is not merely different,
 
 Context does not survive compaction; the ledger does. On resume, trust the ledger, `git log` and `git worktree list` over recollection, and restart at the first phase with no completion line.
 
+### Record dated readings, not only decisions
+
+**A ledger full of rulings still loses the run's state.** Reported by an orchestrator that composed its whole close-out from the ledger without difficulty — rulings, locks, grants, escalations, all there — and then had to reconstruct three things anyway:
+
+- **commit ranges**, dug out of git afterwards;
+- **topology over time** — it had recorded the *current* topology, never the series. And topology is precisely what expires: it measured three times and got three different answers, and a merge instruction it had already sent was wrong within the hour;
+- **who was blocked on whom, and since when** — reconstructed from memory.
+
+So: **write down the measurement together with the instant it was taken, not just the decision it justified.** `Merge order: A → B → C` is useless without `measured 20:14`. A reading with no timestamp is an instruction with an expiry date that does not say what it is — and the reader cannot tell a fact of the run from a fact of that minute.
+
+### The sweep only works if the fork ledger has the format it greps for
+
+**A defect in this skill, found by an orchestrator whose sweep silently found nothing.** The forks wrote their `fork-<slug>.md` in **prose**, which nothing forbade; the pending-lock sweep greps for checkpoint lines like `^LOCK `; the grep matched zero, and **zero was indistinguishable from clean**.
+
+Either the format is mandatory or the sweep does not exist. Make it mandatory: the checkpoint vocabulary goes into the fork ledger **verbatim, one per line, at the start of the line**, and prose commentary goes underneath. Then make the sweep defensive anyway — search for the word anywhere in the file, not only anchored, and cross-check the count of `LOCK` lines against the grants recorded in `ledger.md`. A sweep whose empty result cannot be distinguished from a healthy one is the false green this whole design most needs not to have.
+
 ### Write every checkpoint. Commit three times.
 
 **Writing and committing are separate decisions, and only writing is on the hot path.** Append to the file the moment anything happens — a ruling, a lock grant, a release, an escalation. That is what survives compaction, because compaction destroys the model's context, not the filesystem. A written-but-uncommitted ledger is already doing its whole job.
@@ -434,6 +466,9 @@ The residual risk is honest and small: a hard session death plus another session
 | "The manifest is paperwork now that codex approved" | Each stage catches a class only it can see. Skipping one does not save time; it chooses not to see its defects. |
 | "The graph gave me the merge order, so the order is understood" | A graph predicts sequence, not entanglement. The same order can arise from containment instead, and then a later review is empty. |
 | "Three branches pushed, so tell them to close three" | Check the SHAs. Two at the same commit and a third that is their ancestor is one deliverable, and three `/session-end` runs would open two empty PRs. |
+| "Everything is green and pushed, so the work is done" | A user opening the app found ten defects in twenty minutes that the whole funnel — reviews, gates, 1500 tests — caught none of. Close-out is a handoff, not an ending. |
+| "The specs share no files, so they are independent" | Ask whether the **import graph** joins them. If it does they are one deploy unit, and splitting them buys a merge order instead of parallelism. |
+| "My sweep found no pending locks" | Did it find no locks, or no *lines it could parse*? A prose ledger returns zero to a `^LOCK` grep, and zero reads as clean. |
 | "The fork said DONE and its suite is green" | Green says nothing about what was left out. Diff the branch against its base and look for the plan's files. |
 | "The push exited without error" | Under load a pre-push hook runs for tens of minutes and a timeout looks like a rejection. Confirm the ref with `ls-remote`. |
 | "Worktrees isolate everything" | They isolate git. The database and the deploy runtime stay shared. That is what the locks are for. |
