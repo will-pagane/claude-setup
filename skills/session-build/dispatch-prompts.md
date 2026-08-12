@@ -45,8 +45,18 @@ IDENTITY
 CHANNEL
   Report to the orchestrator with SendMessage to: "main". Its directives arrive as
   <cross-session-message>. Also append every checkpoint to
-  .superpowers/session-build/<RUN_ID>/fork-<spec-slug>.md — that file is the durable record and
-  the fallback channel if a message is ever lost.
+  <ABS_MAIN_CHECKOUT>/.superpowers/session-build/<RUN_ID>/fork-<spec-slug>.md — ABSOLUTE, and in
+  the MAIN checkout, not your worktree. The orchestrator sweeps that directory for ungranted
+  LOCK lines; a file written inside your worktree is invisible to it and the sweep then reports
+  "no pending locks" while yours sits there.
+  You will NOT be able to commit that file — it is on the default branch, which is closed to you.
+  That is expected: the orchestrator commits it. Write it, never try to commit it.
+
+YOUR PEERS — you can address them directly
+  <spec-slug> → <agentId>            (one line per peer fork in this run)
+  Forks list as bare handles, not names, so without this map a COORDINATE WITH directive is
+  unreachable and you would have to relay everything through main. Use these ids with SendMessage
+  when told to coordinate. Never guess a handle you were not given.
   WRITE it on every checkpoint; do NOT commit it on every checkpoint. The file on disk is what
   survives compaction — a commit adds no durability and buys no sharing, since no peer reads your
   ledger through git. Commit it at most twice: once when your surfaces are settled, once at

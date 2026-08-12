@@ -102,6 +102,8 @@ This is the orchestration design. Do it before any branch exists.
 
    So the surviving value is **one transitive question, asked here because nothing later can ask it**: *does any spec touch a bundled shared module?* If one does, mark **every consumer** of that module as contested surface now, including consumers another spec intends only to **delete**. The manifest intersection cannot catch this — it compares **files**, and this conflict lives in the **deploy set**, one level of transitivity away. Missing it produced the worst failure this skill has recorded.
 
+   Answer it by hand, because no tool will: cross the shared-module imports on the **neighbouring branches** against the functions your own specs deploy, and record the intersection — empty or not. The orchestrator that did exactly this reported it as the only thing its pre-scan produced, without having recognised at the time that it was the step that mattered.
+
    Everything else waits for the manifests. Ruling on a hypothesis costs a round and produces decisions that do not survive contact with the plans.
    **Ask the transitive question explicitly, before any plan exists:** *does any spec touch a bundled shared module?* If one does, every consumer of that module is contested surface for this run — mark them all now, including consumers another spec only intends to **delete**. This is the collision that survives both the pre-scan and the Step 5 manifest intersection, because both compare **files** while the conflict lives in the **deploy set**, one level of transitivity away. Skipping this question is what produced the worst failure this skill has recorded.
 
@@ -303,6 +305,7 @@ This is not a gate lying, which is the failure the gate-trust rules cover. It is
 
 - **Assert on behaviour, not on file layout.** A post-merge check written against one plan shape breaks when the plan changes shape, and it breaks *green-looking*: "the directory must not exist" is correct while the plan deletes and wrong the moment the plan switches to stubbing, failing on a perfect merge. Assert what the deployed code must now *do* — the body contains the neutralised marker, the dead module is no longer imported — so the check survives the plan changing its mind.
 - **A collision the orchestrator cannot resolve by ordering** — two forks that genuinely need to edit the same function body — is resolved by `COORDINATE WITH`: the two forks agree on one owner and one merge point, report the agreement, and the orchestrator records it in the ledger. If they cannot agree, escalate to the user.
+  **This only works if the forks can address each other, and by default they cannot.** Forks list as bare handles rather than names, so a fork told to `COORDINATE WITH <peer>` has no way to resolve that peer — and the correct behaviour, refusing to fire blind at a guessed handle, costs the orchestrator a relay round-trip instead. Observed exactly that. **Send every fork the full `spec slug → agentId` map in its dispatch prompt**, and send an updated line whenever it changes. It costs one paragraph and it is the difference between peer coordination being written down and it being reachable.
 
 **Another run may be on the same machine, and nothing arbitrates between orchestrators.** When two fan-outs collide over CPU, the database or a push window, the rule that settles it is **serial by necessity beats serial by choice**: a queue that is structurally serial — each fork must merge the previous one for an ancestry gate to clear, and the containment breaks on every commit — cannot be interleaved without restarting, while a queue that is serial because *you* decided to serialise it can simply wait. Yield to the first. Two orchestrators negotiated exactly this and the rule held; without it the argument has no principle in it, just whoever asks louder.
 
@@ -370,12 +373,13 @@ If the user would rather keep talking to one session, the orchestrator can relay
 
 The consequence is the bad part. The outstanding-lock sweep tells the orchestrator to read every `fork-<slug>.md` for an ungranted `LOCK`. Run from the main checkout against relative paths, that sweep reads an **empty directory and reports no pending locks** — confidently, and about the one deadlock this design produces on its own.
 
-So decide it at Step 2 and put it in the dispatch prompt, absolute either way:
+**Forks write to the main checkout's path, given absolutely in the dispatch prompt.** Not one of two acceptable options — the two were run side by side and only this one works.
 
-- **Forks write to the main checkout's path** (absolute), so the orchestrator can sweep. Then **the orchestrator commits those files**, because a fork is typically barred from committing on the default branch where docs live — which also means *"the fork commits its ledger at most twice"* cannot be honoured and must not be asked of it.
-- **Or forks write inside their own worktree**, and the orchestrator sweeps with explicit worktree paths, never a bare relative one.
+Two independent runs happened to resolve the ambiguity differently, which produced a controlled experiment neither intended. The run that passed the **absolute main-checkout path** ended with all five fork files in the main checkout and every worktree empty; its orchestrator swept seven times across the run, and one of those sweeps caught an ungranted `LOCK` it had genuinely forgotten — the exact deadlock the rule exists to prevent. The run that let the path fall out relative ended with the fork files scattered in the worktrees, the main checkout holding only `ledger.md`, and a stale copy of `ledger.md` sitting in each worktree ready to be mistaken for the live one.
 
-Either is fine. Leaving it unstated is not, and the failure is silent.
+The asymmetry is the argument: the relative arrangement is not merely different, it demands that a busy orchestrator remember to sweep `N` worktrees with explicit paths, to recover information the absolute arrangement hands over for free. Use worktree-local files only if a harness leaves you no choice, and then write the explicit sweep paths into the ledger so the next session inherits them.
+
+**The corollary is counter-intuitive and belongs in the dispatch prompt.** With the absolute path, the fork ledger lives on the default branch — where forks are barred from committing. So **`"the fork commits its ledger at most twice"` cannot be asked of a fork at all; the orchestrator commits those files**, and it has to know that before it promises otherwise.
 
 **Check that the artefacts you promise to collect are committable at all.** A run promised to gather every `codex-review` run dir onto the default branch and had to revoke it in front of five forks: `docs/codex-review/` was listed in `.git/info/exclude`, so collecting it would have needed a forced add the project forbids. This skill treats plans and review transcripts as committable by default; confirm that against the repo's ignore and exclude rules **before** promising, not after.
 
@@ -428,7 +432,8 @@ The residual risk is honest and small: a hard session death plus another session
 | "The push command exited 0" | Did you pipe it? `git push \| tail` returns tail's status. And `PIPESTATUS` is empty under zsh — the fix fails as silently as the bug. |
 | "The output says everything passed" | Then read the exit code, which is a separate claim. All-green output with a non-zero status is what teaches a team to ignore red. |
 | "Nothing was unexplained, so nothing diverged" | Was the list of acceptable differences derived *before* the comparison? Written after, `unexplained = 0` is a tautology. |
-| "The forks write the ledger, so I can sweep it" | From which checkout? Relative paths put those files in the worktrees, and the sweep then reads an empty directory and reports all clear. |
+| "The forks write the ledger, so I can sweep it" | Only if you gave them the absolute main-checkout path. Relative puts those files in the worktrees, and the sweep reads an empty directory and reports all clear. |
+| "`COORDINATE WITH` lets my forks talk to each other" | Not unless you sent them the slug→agentId map. Forks list as bare handles; without it they must relay everything through you. |
 | "The suite is red because my branch is broken" | Under load it may not be finishing at all. Verification that does not complete is not slow verification — it is absent verification. |
 | "The plan is in the codex run dir, close enough" | Implementation reads `docs/superpowers/plans/`. Copy the converged plan back or you ship the un-hardened one. |
 | "SDD said to finish the branch" | `finishing-a-development-branch` opens PRs and merges. Forbidden here. Verify and push instead. |
