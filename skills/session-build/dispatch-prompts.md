@@ -139,6 +139,11 @@ PHASE 4 — IMPLEMENT (arrives as a message; do not start it in this turn)
   Your worktree isolates git and nothing else. So before the plan's migration or deploy tasks:
     send  LOCK migration <files>      → wait for GO → apply → send APPLIED <files>
     send  LOCK deploy <functions>     → wait for GO → deploy + verify → send DEPLOYED <functions> VERIFIED <how>
+  BLOCKED MEANS END YOUR TURN, not wait inside it. When you are holding for a GO, a merge point
+  or a peer, write the state to your ledger file, send WAITING <on what>, and STOP. Do not spin
+  on tool calls to pass the time — it burns calls and leaves the reason for the wait only in your
+  head. Ending the turn puts it in the ledger, and the orchestrator's directive revives you with
+  full context. Two forks did this in a live run and it cost nothing.
   Write every LOCK to your ledger file as you send it, and strike it when the GO arrives. If no
   GO has arrived after roughly ten of your own tool calls, RE-SEND the same LOCK line. Waiting on
   a lock makes you look idle rather than blocked, so a dropped request is invisible from the
@@ -180,7 +185,16 @@ FINAL REPLY — exactly these lines, nothing else:
   MIGRATIONS: <applied files, or "none">
   DEPLOYS: <functions + verification method, or "none">
   VERIFY: <lint/build/test result you read yourself>
-  PARKED: <one line per deferred finding, or "none">
+  PARKED: <one entry per deferred finding, or "none">
+    Write each as a DRAFT PENDINGS ENTRY, not a note to yourself. It is the only thing that
+    survives from you to whoever closes the branch, and they cannot re-open your investigation.
+    Each entry carries: file and line · the number you measured AND how you measured it · the
+    shape of the fix · the exposure left open meanwhile. "Found X, deferred" is worthless; an
+    entry someone can paste into the pendings file without re-deriving anything is the bar.
+    MARK ANY PROOF THAT CANNOT BE REPRODUCED. If you established something in a window that has
+    since closed — an equivalence checked before a migration that now makes the old path raise —
+    say so in the entry. Otherwise the next session re-runs it, gets a failure, and concludes
+    something broke.
   CUT: <one line per spec requirement not implemented, or "none">
 ```
 

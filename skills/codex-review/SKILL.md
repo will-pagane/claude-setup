@@ -40,11 +40,15 @@ Every round still resumes the **same** Codex thread (`codex exec resume "$THREAD
 
 1. Log `### STALL DETECTED — round <n>` in `LOG_FILE` with the repeating objection.
 2. **Change tactic rather than repeat yours.** Either concede the point and write it into the plan, or restate your counter-position in the plan text itself (as an explicit "considered and rejected because …" note) so Codex is reviewing a plan that answers it instead of a plan that ignores it. A repeated objection usually means the rebuttal lived in the chat and never reached the document.
+
+**Do not wait for a stall to apply this — it is the standing rule.** Every rebuttal belongs in the plan the reviewer re-reads, from round 1. Codex re-reads the document, not the conversation, so an argument made only in the prompt is invisible to the next round by construction. Two forks in an independent run reported, without prompting and without knowing of each other, that writing rebuttals into the document was the single thing that stopped an objection from returning the following round. The stall guard exists for the rounds where this was forgotten.
 3. Keep going.
 
 If a caller is orchestrating (a `session-build` fork), report the stall over its channel as information — never as a request for permission.
 
-**Observed once, for whoever wonders whether past round 5 is just noise.** Across three plans reviewed under this mode: one approved at round 5, one at round 9, one at round 10, with zero stalls. Rounds 6–9 of the second produced 8 new findings; rounds 6–10 of the third produced 18. So the tail was not the loop spinning — it was the review still working. One run is thin evidence, and a plan that approves at round 3 is not worse for it; the point is only that hitting 5 without approval is not a sign the argument is exhausted.
+**Observed across two independent runs, for whoever wonders whether past round 5 is just noise.** Eight plans, zero stalls. Run A: approvals at rounds 5, 9 and 10, with rounds 6–9 of one producing 8 new findings and rounds 6–10 of another producing 18. Run B, a different project: approvals at 3, 3, 3, 6 and 7 — **the default cap of 5 would have forced a human tie-break on two of the five, and those two found that run's most serious defects.**
+
+Two things follow, and the second matters more than the first. The tail is not the loop spinning; it is the review still working. And **plans that need few rounds still finish in few rounds** — three of eight approved at round 3 — so removing the cap costs nothing on the easy ones and buys the hard ones exactly where the value was concentrated.
 
 ### The re-copy trap — the most common cause of a stall
 
