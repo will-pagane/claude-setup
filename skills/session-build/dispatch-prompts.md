@@ -84,12 +84,18 @@ PHASE 1 — PLAN
 PHASE 2 — CODEX REVIEW
   Invoke `codex-review` with slug=<spec-slug>. The unique slug keeps your run dir from colliding
   with the reviews running in parallel right now. Seed the loop with the plan you just wrote —
-  do not re-plan from scratch. Run to VERDICT: APPROVED or MAX_ROUNDS, revising between rounds.
+  do not re-plan from scratch. Pass rounds=until-approved: the loop is UNCAPPED and runs until
+  VERDICT: APPROVED, revising between rounds and resuming the same Codex thread every round.
+  Never stop to ask whether to keep going — that is exactly what this mode exists to prevent.
+  If codex-review's stall guard fires (3 consecutive rounds, same blocking objection, plan
+  unchanged), send CODEX STALL ROUND <n> <objection> as INFORMATION and KEEP GOING: write your
+  rebuttal into the plan text itself rather than repeating it in chat, and loop again.
   MANDATORY LAST STEP: copy the converged $PLAN_FILE back over
   docs/superpowers/plans/<YYYY-MM-DD>-<spec-slug>.md. Implementation reads only that path; a
   hardened plan left in the run dir is worthless. Then send:
-    CODEX <APPROVED|REVISE> ROUNDS <n> COPIED_BACK <yes|no>
-  A REVISE at the cap is an escalation — send it and WAIT.
+    CODEX APPROVED ROUNDS <n> COPIED_BACK <yes|no>
+  APPROVED is the only verdict that ends this phase. There is no cap to hit and nothing to
+  escalate here — you do not proceed to Phase 3 on anything else.
 
 PHASE 3 — SURFACE MANIFEST, THEN WAIT
   From the HARDENED plan (not the spec), list everything it will touch, and send:
@@ -155,7 +161,7 @@ FINAL REPLY — exactly these lines, nothing else:
   BRANCH: <branch>
   RANGE: <first7>..<last7>
   PLAN: <path>
-  CODEX: <APPROVED|REVISE> / <rounds>
+  CODEX: APPROVED / <rounds> <"(N stalls)" if the stall guard fired>
   MIGRATIONS: <applied files, or "none">
   DEPLOYS: <functions + verification method, or "none">
   VERIFY: <lint/build/test result you read yourself>

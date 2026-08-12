@@ -136,7 +136,7 @@ The plan is the unit of work. Whoever writes it — inline or in a fork — obey
 - Written with `superpowers:writing-plans`, saved to `docs/superpowers/plans/YYYY-MM-DD-<spec-slug>.md`. **Never** a repo-root `PLAN.md` — concurrent sessions collide there.
 - **Migrations and deploys are explicit tasks in the plan**, each with its own verification: apply the migration and confirm it against the remote ledger; deploy through the project's wrapper and verify by re-downloading and grepping for the change. A version bump proves nothing. A shared module changing means every consumer redeploys.
 - **Order them as late as the plan allows.** Git is disposable; the database is not. A branch can be abandoned after a failure — the migration it already applied cannot, and there is one shared database with no staging behind it. So a migration task sits after the code that depends on it is written and verified, never as an opening move, and a migration that would break the currently-deployed code if its branch never merges is a design the plan must avoid, not a risk it may take. Any migration applied on a branch that is later abandoned is reported to the user by name at Step 6 — production carries it whether or not the code ever ships.
-- Hardened through the `codex-review` adversarial loop to `VERDICT: APPROVED` or `MAX_ROUNDS`.
+- Hardened through the `codex-review` adversarial loop, invoked with **`rounds=until-approved`**, to `VERDICT: APPROVED`. **There is no cap and no deadlock exit in this skill.** The default 5-round cap ends in a human tie-break, which parks the whole fan-out on someone who may be asleep — so the loop runs as long as it takes, resuming the same Codex thread every round, and never pauses to ask permission to continue. Codex-review's own stall guard handles a repeating objection by changing tactic, not by stopping.
   **The critical wiring:** codex-review works inside its own `$RUN_DIR/PLAN.md`. When the loop converges, the hardened plan **must be copied back over** `docs/superpowers/plans/<...>.md`, because implementation reads only that path. Verify the file's content actually changed before implementing.
 - Implemented — **by whom, and how, depends on who owns the branch:**
   - **`N = 1`, this session builds:** run `superpowers:subagent-driven-development` to completion. The main session can spawn implementer subagents, so use them.
@@ -177,7 +177,8 @@ The orchestrator writes no code, reviews no diffs line by line, and never implem
 ```
 READY <slug>                                  # worktree entered, bootstrapped
 PLAN <path> TASKS <n>                         # plan written
-CODEX <APPROVED|REVISE> ROUNDS <n> COPIED_BACK <yes|no>
+CODEX APPROVED ROUNDS <n> COPIED_BACK <yes|no>    # uncapped loop — the only verdict that ends it
+CODEX STALL ROUND <n> <the repeating objection>    # information only; the fork keeps going
 SURFACES <slug>                               # manifest, see below
 TASK <phase> <i>/<n>                          # plan-phase boundaries only, never per task
 LOCK <migration|deploy|file> <identifier>     # requesting the shared surface
@@ -213,7 +214,7 @@ REASSIGN <surface> TO <fork name>   # you no longer own this
 
 **Releases.** When a fork reports `PUSHED`, immediately: create any worktree that was waiting to branch from it, send `GO` to every fork holding on it, and log the release.
 
-**Escalations stop the whole run**, not just one fork: a task the fork could not resolve, a `REVISE` at MAX_ROUNDS, a red verification, an unapplied migration, an unresolvable collision. Report to the user with the fork, the finding, and the state of every other fork.
+**Escalations stop the whole run**, not just one fork: a task the fork could not resolve, a red verification, an unapplied migration, an unresolvable collision. **A codex-review that has not approved yet is NOT one of them** — it runs uncapped and reports a stall as information, never as a request. Report to the user with the fork, the finding, and the state of every other fork.
 
 **How a stop actually stops.** Send `HOLD` to every fork, to take effect **at its next phase boundary** — never mid-phase. A fork currently holding a migration or deploy lock **finishes that operation and releases the lock first**: a half-applied migration or a half-deployed function set is worse than any delay the stop was trying to buy. A fork mid-implementation finishes its current plan phase, commits it, and holds. Then report the exact state of each fork: what it completed, what it holds, what it was about to do.
 

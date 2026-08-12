@@ -20,7 +20,7 @@ This is a **deliberate, high-stakes tool** — reach for it on auth, data models
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `MAX_ROUNDS` | `5` | Hard cap on review rounds. The loop ALWAYS terminates at this. |
+| `MAX_ROUNDS` | `5` | Cap on review rounds. The loop terminates here **unless** `rounds=until-approved`. |
 | `SLUG` | derived from the task (2–5 kebab-case words) | Names the run. Keep it descriptive, e.g. `wave5-cleanup`, `anon-rpc-hardening`. |
 | `STAMP` | `$(date +%Y%m%d-%H%M)` | Run timestamp. Makes the run dir unique so parallel sessions never collide. |
 | `RUN_DIR` | `docs/codex-review/<SLUG>-<STAMP>/` | **Per-run, session-owned folder.** All of this run's artifacts live here — nothing at repo root. Mirrors how `docs/superpowers/` scopes its artifacts. Created at kickoff. |
@@ -29,6 +29,20 @@ This is a **deliberate, high-stakes tool** — reach for it on auth, data models
 | `VERDICT_FILE` | `$RUN_DIR/codex-verdict.txt` | Codex's last-message capture. **Per-run, NOT `/tmp`** — a shared `/tmp/codex-verdict.txt` clobbers across concurrent runs. |
 
 If the user invoked the skill with an argument like `rounds=3`, use that for `MAX_ROUNDS`. You may also pass `slug=<...>` to override the derived slug. Echo the resolved values (including the full `RUN_DIR`) back before starting.
+
+### `rounds=until-approved` — no cap, no human tie-break
+
+Pass `rounds=until-approved` and the loop **keeps going until `VERDICT: APPROVED`**. It never breaks to the deadlock hand-off, and it never stops to ask permission to continue. Use it when the caller is an autonomous run that must not pause — `session-build`'s forks pass it by default, because a run that parks on a tie-break at round 5 has stalled the whole fan-out waiting for a human who may be asleep.
+
+Every round still resumes the **same** Codex thread (`codex exec resume "$THREAD_ID"`), so the critic keeps full context however long the argument runs — this is a longer argument, not a series of fresh ones.
+
+**The stall guard, which does not stop the loop.** Unbounded means a genuinely irreconcilable disagreement could spin forever, so track it rather than ignore it. When **3 consecutive rounds** produce a `REVISE` whose blocking objections are substantively the same as the previous round's *and* `PLAN_FILE` did not change, the argument has stalled — Codex is repeating itself and Claude is holding. Then, **without pausing**:
+
+1. Log `### STALL DETECTED — round <n>` in `LOG_FILE` with the repeating objection.
+2. **Change tactic rather than repeat yours.** Either concede the point and write it into the plan, or restate your counter-position in the plan text itself (as an explicit "considered and rejected because …" note) so Codex is reviewing a plan that answers it instead of a plan that ignores it. A repeated objection usually means the rebuttal lived in the chat and never reached the document.
+3. Keep going.
+
+If a caller is orchestrating (a `session-build` fork), report the stall over its channel as information — never as a request for permission.
 
 **Parallel-safety (why the run dir exists):** every artifact this skill touches is timestamped and scoped under `RUN_DIR`, so multiple codex-review sessions — or a fan-out of per-wave reviews — run concurrently without stepping on each other's `PLAN.md`, log, or verdict file. Never write these artifacts to the repo root or to a shared `/tmp` path.
 
@@ -122,7 +136,7 @@ Both `codex exec` and `codex exec resume` support `--json` (stream → parse `th
 2. Grep the last line for the verdict token.
    - `VERDICT: APPROVED` → break the loop, go to Step 3 (converged).
    - `VERDICT: REVISE` → Claude reads the critique, decides **what's actually worth acting on** (Claude has final say — Codex advises, it does not command). Revise `PLAN_FILE`. Append to `LOG_FILE`: `### Claude's response` + what you changed and what you rejected and why. Increment `ROUND`.
-3. If `ROUND > MAX_ROUNDS` → break to Step 3 (deadlock).
+3. If `rounds=until-approved` → **never break here.** Run the stall guard (3 consecutive same-objection rounds with an unchanged `PLAN_FILE` → log it, change tactic, continue) and loop again. Otherwise, if `ROUND > MAX_ROUNDS` → break to Step 3 (deadlock).
 
 ### Step 3 — Resolution (human gate #2)
 
@@ -130,10 +144,13 @@ Both `codex exec` and `codex exec resume` support `--json` (stream → parse `th
 
 **If MAX_ROUNDS hit without APPROVED (deadlock):** Do NOT pretend it converged. Surface the unresolved disagreements explicitly: list each point Codex still flags and Claude's counter-position. Hand it to the human to break the tie. This is a legitimate, useful outcome — a flagged disagreement beats a false "approved."
 
+**Under `rounds=until-approved` this branch never runs.** There is no deadlock exit and no tie-break to hand over: the loop continues, driven by the stall guard, until Codex returns `VERDICT: APPROVED`. Resolution is reached exactly once, on approval.
+
 ## Hard rules
 
 - Codex is read-only EVERY round — `-s read-only` for the first call, `-c sandbox_mode="read-only"` for every resume (resume has no `-s`). It never writes. If you're tempted to give it write access, stop — that's a different skill.
-- The loop ALWAYS terminates at `MAX_ROUNDS`. No unbounded recursion.
+- The loop terminates at `MAX_ROUNDS` — **except** under `rounds=until-approved`, whose whole purpose is to run past it until Codex approves. That mode is deliberate and caller-requested; never enable it on your own initiative, and never disable it once a caller asked for it. In every other mode, no unbounded recursion.
+- **Never stop mid-loop to ask permission to keep going.** The round budget is settled at kickoff, from the args. Asking again halfway is the failure mode `rounds=until-approved` exists to prevent.
 - Claude is the final arbiter on every REVISE — incorporate good critiques, reject bad ones *with a reason logged*. Don't cave to Codex on everything (that defeats the cross-model check) and don't ignore it (that defeats the point).
 - Code only after human gate #2.
 - `LOG_FILE` is the deliverable — it tells the whole story of the argument. Keep it complete.
