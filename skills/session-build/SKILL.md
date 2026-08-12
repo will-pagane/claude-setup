@@ -91,7 +91,7 @@ This is the orchestration design. Do it before any branch exists.
    - **Same table in two migrations** → order them. The later one is written against the earlier one's schema, and is applied only after the earlier is confirmed applied.
    - **Same source file** → prefer moving the change into one spec's plan. If genuinely both, order them and make the second fork merge the first's branch.
 4. **Present the order and the rulings** to the user in prose, with the reasoning, and get confirmation. This is the last gate before the run goes autonomous.
-5. **Create the ledger** (see below) and one todo per spec per phase.
+5. **Create the ledger** (see below) and one todo per spec per phase. This is milestone commit #1 of the three the ledger gets all run — see *Write every checkpoint. Commit three times.*
 6. **Run the project's collision gate** (e.g. `npm run collide`) if it has one.
 
 ## Step 3 — Isolate
@@ -264,6 +264,22 @@ If the user would rather keep talking to one session, the orchestrator can relay
 
 Context does not survive compaction; the ledger does. On resume, trust the ledger, `git log` and `git worktree list` over recollection, and restart at the first phase with no completion line.
 
+### Write every checkpoint. Commit three times.
+
+**Writing and committing are separate decisions, and only writing is on the hot path.** Append to the file the moment anything happens — a ruling, a lock grant, a release, an escalation. That is what survives compaction, because compaction destroys the model's context, not the filesystem. A written-but-uncommitted ledger is already doing its whole job.
+
+**Committing per update buys nothing and costs plenty.** It does not improve durability (the file is on disk either way) and it does not share anything (each fork keeps its own `fork-<slug>.md` in its own worktree; nobody reads a peer's ledger through git). Meanwhile every commit runs the repo's pre-commit hooks — in a real run that meant a full code-graph rebuild over the whole tree, per ledger line, on a machine already saturated by N concurrent forks — every push to the default branch is another collision window with other sessions writing docs there, and the run's actual commits drown in a wall of `docs(...): record …`. It also contradicts the ordinary rule that commits track plan phases, not individual actions; a ledger line sits far below even a task.
+
+So commit the ledger at **three milestones**, and only these:
+
+1. **End of Step 2** — scope, dependency graph and collision rulings are frozen.
+2. **After the manifest intersection** — the only later point where rulings genuinely change.
+3. **At close-out** — the finished run.
+
+The third commit carries everything the per-update commits would have, because the file accumulated it all along. If a milestone lands with nothing new since the last one, skip it — three is a ceiling, not a quota.
+
+The residual risk is honest and small: a hard session death plus another session rebasing over the working tree could lose uncommitted lines. Cheaper than the certain cost of committing every line.
+
 ## Common mistakes
 
 | Mistake | Reality |
@@ -287,6 +303,7 @@ Context does not survive compaction; the ledger does. On resume, trust the ledge
 | "Push triggers the deploy" | Verify by re-downloading the deployed function. Bulk redeploys silently fail. |
 | "The fork's report says tests passed" | The branch owner runs the full suite itself before pushing. Nothing else counts. |
 | "A quiet fork is a working fork" | Ping it, read its ledger and its git log, escalate. Silence is not progress. |
+| "The ledger must be committed to survive compaction" | The **file** survives it — compaction destroys context, not the filesystem. Write every checkpoint; commit at three milestones. |
 | "A fork waiting on a lock is fine, it will speak up" | It is silent *because* it is blocked, and the liveness rule keys on silence. Sweep the ledgers for ungranted `LOCK` lines every time you touch them. |
 | "The branch failed, so nothing shipped" | Its migration already landed in the one shared database. Git rolls back; production does not. Name it in the report. |
 | "The work is done, I'll open the PR" | This skill never opens a PR and never merges. `/session-end` does, when the user runs it. |

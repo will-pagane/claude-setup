@@ -47,6 +47,11 @@ CHANNEL
   <cross-session-message>. Also append every checkpoint to
   .superpowers/session-build/<RUN_ID>/fork-<spec-slug>.md — that file is the durable record and
   the fallback channel if a message is ever lost.
+  WRITE it on every checkpoint; do NOT commit it on every checkpoint. The file on disk is what
+  survives compaction — a commit adds no durability and buys no sharing, since no peer reads your
+  ledger through git. Commit it at most twice: once when your surfaces are settled, once at
+  PUSHED. A commit per checkpoint runs the repo's hooks over and over on a machine already
+  saturated by your peers, and buries your real commits.
 
 FIRST ACTION — AND THE RULE THAT REPLACES IT
   Do NOT call EnterWorktree. It will refuse you: your working directory is the repository root,
