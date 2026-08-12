@@ -151,6 +151,8 @@ The plan is the unit of work. Whoever writes it — inline or in a fork — obey
   - **`N ≥ 2`, a fork builds:** **implement inline — SDD is unavailable to a fork.** A fork's boilerplate carries `"Do NOT spawn subagents with the Agent tool"` as a hard, non-overridable rule, so SDD's fan-out mechanism cannot run there no matter what the directive says. The fork works the plan **directly, one task at a time, with verification per task and nothing marked done without reading real output** — SDD's discipline, minus its parallelism. Budget for it: this is the slowest part of an `N ≥ 2` run.
   **In both cases, override SDD's ending:** it finishes by calling `superpowers:finishing-a-development-branch`. Do **not** run it — it opens PRs and merges, which this skill forbids. Verification + push replaces it.
 - Closed by the branch owner running the project's **full** lint, typecheck, build and test suite and reading the actual output — a subagent's report does not count — then `git push -u origin <branch>`. Never force-push. Red → fix, re-run; unfixable → escalate.
+- **A fact the spec asserts is not evidence.** Specs and plans propagate claims; they do not establish them. Any plan step that encodes a fact about the existing system — a column's nullability, an external contract, what a CLI does — reads that fact **from the system** before shipping. A whole review loop can pass over a wrong one, because everyone downstream is quoting the same upstream sentence; the database is what finally disagrees, in production. See *A correction looks like verification* in `codex-review`.
+- **Read a negative check's hits; do not count them.** "Zero occurrences" is a claim about content, and a grep that returns one line has not told you the check failed — it has told you to go read that line. In the observed run the single hit was the fork's own warning comment, saying the very thing the grep was defending.
 
 **N = 1:** run all of that inline, then go to Step 6.
 
@@ -286,7 +288,7 @@ Compose from the ledger — never from memory — and print inline, in the user'
 
 - **Specs** — one line per spec: file path, and the one-sentence design it captured.
 - **Branches** — one line per branch: name, commit range, what shipped, verification result.
-- **Aplicado em produção** — migrations applied (with ledger confirmation) and functions deployed (with how each was verified), per branch.
+- **Aplicado em produção** — migrations applied (with ledger confirmation) and functions deployed (with how each was verified), per branch. **Who executed and who verified are two fields, not one.** In a run where one fork deploys a surface another fork owns, both "I deployed it" and "not verified by me" are false; the honest line names the executor and the verification separately — *"deployed by fork B; I verified its result on the critical target, from the deployed bundle: marker present, auth gate intact, zero matches for the forbidden call"*. Collapsing them either claims work you did not do or discards a verification you did.
 - **Aplicado sem código** — any migration applied by a branch that was abandoned or left incomplete, named individually. The database kept it; git did not. This section being empty is a claim, so make it only after checking.
 - **Ordem de merge** — the dependency order, explicitly, when one branch was based on another. Merging them out of order breaks the second.
 - **Você precisa revisar** — what only a human can check: visual/UX, live e2e, external panel config, anything observable only in production.
@@ -355,6 +357,9 @@ The residual risk is honest and small: a hard session death plus another session
 | "The gate went green, so I am clear" | Green is a timestamp. An ancestry check compares HEADs, and the peer's next commit — a ledger commit will do — makes it false with no notification. |
 | "Only code commits can break a containment window" | A docs or ledger commit moves HEAD exactly as well. A freeze that permits "just the paperwork" is not a freeze. |
 | "Frozen means I should not touch anything" | Frozen means no commits. Working-tree churn is free — `HEAD` is what the predicate reads. |
+| "I am correcting a mistake, so I am being careful" | Correcting is the move that most feels like it needs no evidence. Test the OLD claim — sometimes it was the true one. |
+| "The spec says the column is nullable" | A spec propagates claims, it does not establish them. Read the catalogue; production is a late place to find out. |
+| "The negative grep returned one hit, so it failed" | Read the hit. Once it was the warning comment defending the very rule being checked. |
 | "The plan is in the codex run dir, close enough" | Implementation reads `docs/superpowers/plans/`. Copy the converged plan back or you ship the un-hardened one. |
 | "SDD said to finish the branch" | `finishing-a-development-branch` opens PRs and merges. Forbidden here. Verify and push instead. |
 | "The user can run `/session-end` in the orchestrator" | It assumes the worktree is the cwd, and no session in the run is inside one. The user launches a session **from** the worktree directory. |

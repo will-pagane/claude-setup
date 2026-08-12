@@ -56,6 +56,22 @@ The failure is invisible from the inside: Claude answers the objection every rou
 
 Copy the plan in **once**, at kickoff. After that, revise `PLAN.md` in place and copy it back out at the end. If a caller genuinely must re-copy each round, its rebuttal section has to live in the **canonical** file so the copy carries it in rather than wiping it.
 
+### A correction looks like verification
+
+**This loop's most dangerous blind spot, and it survives any number of rounds.** The pattern is not "people assert things without checking". It is that **correcting is the operation that most feels like it dispenses with checking**, because it already feels like diligence. A correction arrives dressed as the careful move, so nobody asks it for evidence.
+
+Observed, three times in one run, always the same shape — a confident claim, repeated downstream, never once checked against the thing it describes:
+
+- A spec asserted a column was nullable. The plan repeated it. The migration encoded `= NULL`. **Five adversarial rounds went straight over it**, because both models were reading the same spec rather than the catalogue. The database caught it, with a `NOT NULL` violation, in production.
+- A fork reported that the CLI does not download shared modules; the orchestrator relayed and amplified it; a second fork found the project's own docs contradicting it and prepared a correction to the docs. **Nobody had run the download.** The CLI does download them.
+- And the case that closes the argument: **the claim being corrected was the true one.** Applying that correction would have deleted a working warning and installed a hazard in its place — the rule it was about to remove existed *because* the bundle carries those modules.
+
+So:
+
+1. **A finding that asserts a fact about the system — a column's nullability, an API contract, a tool's behaviour — is applied only after reading it from the source**, not from the document that cites it. This binds the reviewer's finding and the builder's rebuttal equally. Two models reading the same spec is not two witnesses; it is one witness quoted twice.
+2. **Plan review does not substitute for reading the catalogue.** This loop's strength is internal coherence and consequence — whether the plan contradicts itself, whether step 4 breaks step 2. It is **structurally blind** to *"the world is not like that"*, because it only ever sees the document. Migrations are where that blindness executes, so any plan step encoding a fact about existing schema gets that fact read from the live system before it ships.
+3. **When correcting a written claim, test the OLD version, not the new one.** Cheap, decisive, and precisely the step that the feeling of fixing skips. If the old claim survives the test, the correction was the error.
+
 **Parallel-safety (why the run dir exists):** every artifact this skill touches is timestamped and scoped under `RUN_DIR`, so multiple codex-review sessions — or a fan-out of per-wave reviews — run concurrently without stepping on each other's `PLAN.md`, log, or verdict file. Never write these artifacts to the repo root or to a shared `/tmp` path.
 
 ## Flow
