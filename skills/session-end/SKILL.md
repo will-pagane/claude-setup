@@ -121,6 +121,10 @@ Hit in a real close-out, worth walking before you meet it:
 
 The way out is to **regenerate the file locally and never commit it**. Then remember at Step 9 that the tree is now deliberately dirty.
 
+**And there is a fourth step, which is where it actually bites: that repair fixes the branch and breaks `main`.** Because step 1 made `main` an ancestor, merging the branch back carries its **whole tree** — including the stale generated file. `main`'s typecheck then fails on the very RPC the old file never knew. Measured end to end in a real close-out, and the gate's own message had predicted it in writing: *goes stale on the next migration and, via `merge=ours`, clobbers main's copy.* Reading the warning and understanding it as theory was not enough.
+
+**The repair is blocked by two gates closing over the same file** — one refusing non-doc commits on `main`, the other refusing that file on a branch — so no commit is possible without the bypass this skill forbids. **When two gates close over one file, look for the project's own tool that is permitted to cross both, instead of breaching one.** It usually exists: here a dedicated script is by design the only place that regenerates and commits that file, only on `main`, using the bypass deliberately and documented. Note that such a tool may **self-skip** when its usual trigger is absent — this one looks for a migration in the change set, and the damage had come from a merge — so it had to be invoked by hand with a migration path fed to it. Using the sanctioned tool outside its usual trigger is still using it; breaching a gate is not.
+
 ## Step 8 — Post-merge sync
 
 The merge changed `main`; production usually needs a second pass.
@@ -140,7 +144,11 @@ Only after Step 7 confirmed `MERGED`.
 
 **`git worktree remove` refuses a dirty tree, and Step 7 may have made it dirty on purpose.** The regenerated generated file is left uncommitted deliberately, so this is exactly where the temptation to reach for `--force` appears — and `--force` here discards work without reading it. Instead, `git checkout` the *generated* file (only that one, and only because it is reproducible by a command) and then remove the worktree normally. If anything else is dirty, stop and report: that is the case this step exists to protect.
 
-**A remote branch already deleted by the host is not a failure.** Many forges delete the head branch on merge, so `git push origin --delete` answers `remote ref does not exist`. That is the expected outcome of an already-completed cleanup — confirm with `git branch -r` and move on.
+**A remote branch already deleted by the host is not a failure.** Many forges delete the head branch on merge, so `git push origin --delete` answers `remote ref does not exist`. That is the expected outcome of an already-completed cleanup — confirm with `git branch -r` and move on. **Run `git fetch --prune` before that confirmation**, or `git branch -a` keeps listing `remotes/origin/<branch>` for a while and the cleanup check appears to fail.
+
+**Two shell traps that make a correct result look like a failed command**, both hit while verifying this step:
+- **`grep -c` exits 1 when the count is 0.** A compound verification whose whole point is "zero orphan commits" therefore reports failure at the moment it succeeds.
+- **Piping a command hands you the pipe's status, not the command's** — see the push confirmation above; the same applies to every check here.
 
 If the session ran directly on the main checkout with no worktree, steps 1 and 3's `worktree remove` simply do not apply — switch to `main` and delete the branch.
 
@@ -151,6 +159,8 @@ Compose from the ledger, never from memory, in the user's language:
 - **Mergeado** — PR number and URL, commit range, what shipped.
 - **Aplicado em produção** — migrations applied (+ ledger confirmation), functions deployed (+ how each was verified after the merge).
 - **Pendências registradas** — each item written to the pendings file, with its file path.
+- **Pendências fechadas** — each item **removed** from the file because this session resolved it. Easy to omit, because the report is built from what you wrote and closing an item leaves nothing to point at — but on a cleanup-heavy branch it can be the larger half of the work. One close-out recorded 13 items opened and said nothing about **17 closed**, until the user asked outright *"didn't you remove the ones you fixed?"* — and had no way to know otherwise.
+- **Re-read the pendings file after writing it**, and check whether anything that *survived* was invalidated by this session's own work. The same check that surfaced the omission above also found two stale survivors: one item claiming a property held for "exactly one of ~200 migrations" when the session had made it six, and another conditioned on a ratchet that closed that same day. Your own diff is the most likely thing to have falsified the list you are leaving behind.
 - **Você precisa revisar** — what only a human can check: visual/UX, live e2e, external panel config.
 - **Limpeza** — branch and worktree removed, or exactly why one survived.
 - **Deixado de fora** — untracked/unrelated files left in the working tree, and anything cut.
