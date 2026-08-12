@@ -48,9 +48,19 @@ Everything downstream reads from this inventory. Build it once; never re-derive 
 
 ## Step 1 — Verify before anything irreversible
 
+**When a failure's justification may have aged out, prove the merge resolves it without merging.** `git merge-tree --write-tree origin/main <branch>` computes the merged tree and mutates nothing — exit 0 plus the corrected blob in the resulting tree is proof, and it costs no branch state. Observed: a branch's last failing test was justified as "this file is byte-identical to `origin/main`" — true when measured, and falsified when a neighbouring session merged the fix afterwards. `merge-tree` settled it in one command, and the merged default branch then ran clean.
+
+
+
 Run the project's full lint, typecheck, build and test suite **yourself** and read the actual output. Red → fix it or stop and report. Never migrate, deploy or merge off a red branch.
 
 ## Step 2 — Migrations
+
+**A migration applied before the merge hides from the main checkout.** The CLI's list prints local and remote columns, and the *files* still live on the branch — so everything this run applied shows up **only in the remote column, with the local one blank**. A grep anchored to the local column returns **zero of yours** while happily listing other sessions' work, which reads exactly like *nothing was applied* — and acting on that reading undoes production. One run had **nine** in that state (seven from one spec, two from another). Read the remote column, and cross-check against the branch's own migration files.
+
+**Beware the count that is true of a spec and false of the run.** In that same case a fork reported seven, correct for its own spec and wrong as an answer to "how many did this run apply". A correct value answering a different question than the reader is asking was the single most recurrent failure of that day — when you quote a number, say what it counts.
+
+
 
 For every migration file in the inventory, confirm it is actually applied to the target database — `supabase db push` (or the project's equivalent), then confirm against the remote ledger (`supabase migration list --linked`). "It was probably applied earlier in the session" is not confirmation.
 
@@ -130,6 +140,12 @@ The way out is to **regenerate the file locally and never commit it**. Then reme
 The merge changed `main`; production usually needs a second pass.
 
 1. **Redeploy every changed function** through the project's wrapper and re-verify by download. On hosts that redeploy in bulk on a push to `main`, the merge silently reverted the Step 3 deploy. Re-run the drift check.
+
+   **The trigger is *any* push to the default branch, not the merge — a docs-only commit does it.** Measured in one close-out: the deploy reverted **three times**, and the first was **before** the merge, caused by a commit that touched no function at all; ten functions dropped back. It then reverted again on the merge push, and again on the pendings push. So **deploy is the last action after the last push** — running docs → deploy → docs → deploy wastes a full round that docs → docs → deploy avoids.
+
+   **How to tell a revert from your own bug:** download the deployed function and run `git status` on the downloaded file. **Clean** means the deployed bundle is byte-identical to the *old* source on the default branch — that is a revert, not a mistake you made. In that run the forbidden call count in one function went from 0 back to 2, and the clean status is what proved it.
+
+   **And bound the blast radius before treating it as an incident:** hosts revert **code only** — migrations already applied stay applied. So the damage of such a revert is limited to what lives purely in the function. Confirm the two flanks anyway: that no scheduler still points at the reverted function, and that the callers you removed are really gone from the database side.
 2. **Regenerate hook-owned generated files** (e.g. `npm run types`) on the main checkout if the schema changed, especially when the merge resolved them `ours`.
 3. `git pull origin main` on the main checkout so it reflects the merge.
 
@@ -141,6 +157,16 @@ Only after Step 7 confirmed `MERGED`.
 2. Confirm nothing is stranded: `git log <branch> --not origin/main --oneline` returns empty, and `git -C <worktree> status --porcelain` is clean. Non-empty → **stop and report**; never delete unmerged commits or uncommitted files.
 3. `git worktree remove <dir>` → `git branch -d <branch>` (lowercase `-d`, which refuses unmerged work) → `git push origin --delete <branch>`.
 4. Confirm: `git worktree list` and `git branch -a` no longer show it.
+
+**`git branch -d` measures against the branch's UPSTREAM, not against `HEAD`** — so on a collapsed topology it refuses a branch that is fully merged:
+
+```
+warning: not deleting branch '<A>' that is not yet merged to
+         'refs/remotes/origin/<A>', even though it is merged to HEAD
+error: the branch '<A>' is not fully merged
+```
+
+The remote had frozen behind while the local branch advanced, which never happens when each branch gets its own pull request — the merge moves or deletes the remote — and always happens to a branch that collapsed into a sibling's. **The expensive mistake is reading that refusal as "use `-D`"**, which discards silently if the containment claim was ever wrong. Correct order: prove containment with `git log <branch> --not origin/main` returning empty, **delete the remote ref first**, then `-d` succeeds on its own.
 
 **`git worktree remove` refuses a dirty tree, and Step 7 may have made it dirty on purpose.** The regenerated generated file is left uncommitted deliberately, so this is exactly where the temptation to reach for `--force` appears — and `--force` here discards work without reading it. Instead, `git checkout` the *generated* file (only that one, and only because it is reproducible by a command) and then remove the worktree normally. If anything else is dirty, stop and report: that is the case this step exists to protect.
 
@@ -179,6 +205,9 @@ Compose from the ledger, never from memory, in the user's language:
 | "I deployed at Step 3, so production is current" | The merge push to `main` can revert branch deploys. Redeploy at Step 8. |
 | "`gh pr merge --delete-branch` saves a step" | The worktree holds the branch. It fails, or strands the worktree. Delete after removing the worktree. |
 | "`git worktree remove` from inside the worktree" | You cannot delete your own cwd. Exit first. |
+| "`git branch -d` refuses, so I need `-D`" | `-d` compares against the **upstream**, not `HEAD`. Prove containment, delete the remote ref, then `-d` passes on its own. `-D` would discard silently if you were wrong. |
+| "I deployed after the merge, so production is current" | Any later push to the default branch reverts it — a docs-only commit will do. Deploy last, after the last push. |
+| "The migration list shows none of mine, so nothing was applied" | Pre-merge migrations appear only in the **remote** column, local blank. Acting on that reading undoes production. |
 | "`git branch -D` is faster" | `-D` discards unmerged commits silently. Use `-d` and let it refuse. |
 | "Nothing deferred, but the file should exist" | No pendings, no file. An empty pendings file is noise. |
 | "Squash keeps history tidy" | History-preserving projects lose the per-phase commits. `--merge`. |
