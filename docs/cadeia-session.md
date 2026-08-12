@@ -94,8 +94,8 @@ A orquestradora existe para ser esse gargalo. A ordem de concessão vem da regra
 
 1. **Plano** — `writing-plans` em `docs/superpowers/plans/`. Migrations e deploys entram como tasks explícitas do plano, cada uma com verificação própria; não são uma etapa separada depois.
 2. **Codex review** — loop adversarial até `APPROVED` ou o teto de rodadas. O passo que ninguém pode pular: **copiar o plano endurecido de volta** para o caminho que a implementação lê. O `codex-review` trabalha dentro do run dir dele; sem o copy-back, você revisa um plano e implementa outro.
-3. **Manifesto de superfícies** — a filha declara o que o plano endurecido vai tocar (migrations, tabelas, edge functions, módulos compartilhados, arquivos) e **para**. Nenhum `GO` sai antes do último manifesto chegar.
-4. **Implementação** — `subagent-driven-development` até o fim, com o final da skill sobrescrito. Migration e deploy só acontecem com lock concedido.
+3. **Manifesto de superfícies** — a filha declara o que o plano endurecido vai tocar (migrations, tabelas, edge functions, módulos compartilhados, arquivos) e **para**. Nenhum `GO` sai antes do último manifesto chegar. E "para" aqui é literal: **a filha é one-shot, o turno dela acaba nesse ponto.** Ela não fica num loop esperando — quem a revive é a orquestradora, com uma nova mensagem. Uma filha esquecida parece idêntica a uma filha trabalhando.
+4. **Implementação** — **em linha, tarefa por tarefa, dentro da própria filha.** `subagent-driven-development` não roda ali: o boilerplate de fork proíbe a ferramenta `Agent` por regra dura, que diretiva nenhuma sobrescreve, e sem subagente o mecanismo da skill não existe. O que se mantém é a disciplina dela — uma tarefa por vez, verificação da tarefa rodada antes de marcá-la feita, nada dado como pronto sem ler saída real. Só o caminho de spec única, que roda na sessão principal, usa SDD de verdade. Migration e deploy continuam só com lock concedido.
 5. **Verificação e push** — lint, typecheck, build e testes rodados e *lidos* pela dona da branch. Relatório de subagente não conta como prova.
 
 ### O protocolo do cross-session chat
@@ -204,9 +204,13 @@ Por isso a task de migration é ordenada o mais tarde possível, depois do códi
 
 **Durante o run: a orquestradora, sempre.** Ela é a única sessão com o quadro inteiro e a única que concede lock de migration e de deploy. Uma instrução mandada direto a uma filha atropela isso: a orquestradora ainda acredita que a filha está parada e pode conceder o lock a outra — dois `db push` simultâneos contra um banco só é exatamente o que a serialização existe para impedir. Quer um detalhe de uma filha? Pergunte à orquestradora; ela pergunta e relaya.
 
-**Depois do run: `/session-end` roda dentro do fork dono da branch**, não na orquestradora. Isso é mecânico, não estilístico — `session-end` lê `git branch --show-current` de dentro do worktree e precisa sair dele para removê-lo no fim. A orquestradora fica no checkout principal e não pode estar dentro de N worktrees. A filha já está no lugar certo, e ainda tem o que a etapa de pendências precisa: o que ela adiou, o que cortou, e o que a suíte de testes realmente imprimiu.
+**Depois do run: `/session-end`, uma vez por branch, em ordem de merge — numa sessão cujo diretório de trabalho *seja* o worktree.** Isso é mecânico, não estilístico: `session-end` lê `git branch --show-current` do diretório corrente e precisa sair dele para removê-lo no fim, então depende de cwd, não de `-C`.
 
-Se você preferir nunca sair da orquestradora, ela pode entrar em cada worktree e rodar `/session-end` ela mesma, uma vez por branch, em ordem de merge. Custa um contexto absorvendo N fechamentos, e pendências escritas a partir de um relatório em vez da memória de quem construiu.
+E aqui mora uma armadilha real: **nenhuma sessão do run está dentro do próprio worktree.** A orquestradora fica no checkout principal, e as filhas nascem na raiz do repositório e têm a entrada recusada (ver a nota sobre `EnterWorktree` abaixo). Então nem uma nem outra roda `/session-end` e acerta a branch sozinha. O caminho é abrir uma sessão *a partir* do worktree — `cd .claude/worktrees/‹slug›-‹data›` e iniciar ali.
+
+O que o run deixa pronto para essa sessão nova é o ledger: as linhas finais de `PARKED` e `CUT` de cada filha estão lá exatamente para que quem não construiu a branch consiga escrever pendências honestas. Se você preferir não sair da orquestradora, ela relaya — ela tem o quadro inteiro. O que ela não consegue é estar dentro de N worktrees.
+
+> **`EnterWorktree` não resolve isso.** Nesta build a ferramenta só troca *entre* worktrees; a primeira entrada, vinda do diretório de lançamento, é recusada — para a orquestradora e para toda filha, já que ambas nascem na raiz do repositório. Três filhas reproduziram o mesmo erro, e não é problema de path: `git worktree list --porcelain` devolve o caminho exato e o `pwd -P` de dentro bate byte a byte. Isolamento, no run, é disciplina: caminho absoluto em toda escrita, `cd` no worktree em todo bash, e `git -C ‹worktree› branch --show-current` conferido antes de cada commit. O gate de branch do repo é a rede, não a guarda.
 
 ---
 

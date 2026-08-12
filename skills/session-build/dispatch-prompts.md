@@ -10,20 +10,22 @@ Anything decided *after* dispatch travels over `SendMessage`, never by assumptio
 
 ## § Naming
 
-`description` is the only naming lever the `Agent` tool exposes, and its value becomes the fork's name in `ListAgents` — which is its address. Always:
+`description` is the only naming lever the `Agent` tool exposes. It *may* become the fork's name in `ListAgents` — but **do not count on it**: observed in a live run, three forks dispatched with distinct `description` values all listed as bare `agentId` handles, nameless. Always:
 
 ```
 subagent_type: "fork"                  # inherits context; a model override is ignored
 description:   "spec <spec-slug>"      # e.g. "spec inbound-close-time-clock"
 ```
 
-Record `spec slug → name → [ref] → agentId` in the ledger at spawn. Peer names on one machine are not unique; the ledger mapping is what keeps an address unambiguous.
+**Record `spec slug → agentId` in the ledger at spawn, from the spawn call's own result.** The `agentId` is the address that always resolves, and if the listing shows no names it is the *only* one you can recover. Add `name → [ref]` too when the build does provide them — peer names on one machine are not unique, so the ledger mapping is what keeps an address unambiguous either way.
 
 ---
 
 ## § Fork implementer
 
 One per spec. Fill every `<...>` before sending.
+
+**Two dispatches per fork, not one.** A fork is one-shot — it reports once and its turn ends — and it cannot spawn subagents. So the prompt below carries **phases 1–3** and the fork stops at its `SURFACES` manifest, which is where the contract wanted it to stop anyway. The orchestrator then re-engages it with `SendMessage` for **phases 4–5** (§ Fork re-engagement), and every later directive is likewise a fresh message that revives it from its transcript with context intact.
 
 ```
 You are the child session that owns exactly one spec, start to finish. You inherited this
@@ -46,10 +48,20 @@ CHANNEL
   .superpowers/session-build/<RUN_ID>/fork-<spec-slug>.md — that file is the durable record and
   the fallback channel if a message is ever lost.
 
-FIRST ACTION
-  Call EnterWorktree with path: <ABS_WORKTREE_PATH>. Do this before reading or writing anything.
-  A worktree that exists on disk does not pin your writes until you enter it.
-  Then bootstrap it as the project requires (<PROJECT_BOOTSTRAP_COMMANDS>), and send:
+FIRST ACTION — AND THE RULE THAT REPLACES IT
+  Do NOT call EnterWorktree. It will refuse you: your working directory is the repository root,
+  and this build only switches BETWEEN worktrees, never into the first one from the launch
+  directory. Three forks reproduced this; it is not a path problem and not worth a round-trip.
+  Your writes are therefore NOT pinned by anything. Isolation is your discipline:
+    - every Read/Write/Edit takes an absolute path under <ABS_WORKTREE_PATH> — never a relative one;
+    - every Bash call cd's into <ABS_WORKTREE_PATH> in the same command;
+    - before EVERY commit, `git -C <ABS_WORKTREE_PATH> branch --show-current` must print <branch>.
+  The launch directory is checked out on the default branch, so a stray bare git command commits
+  there. The repo's branch gate is the backstop, not your guard — and the orchestrator is watching
+  the main checkout's `git status` for files you dirtied by accident.
+  Verify the worktree by hand instead (`git -C <ABS_WORKTREE_PATH> branch --show-current`, tree
+  clean, deps installed, any per-checkout linking working), bootstrap only what is missing
+  (<PROJECT_BOOTSTRAP_COMMANDS>), and send:
     READY <spec-slug>
 
 PHASE 1 — PLAN
@@ -86,18 +98,21 @@ PHASE 3 — SURFACE MANIFEST, THEN WAIT
       functions:  <edge/serverless functions>
       shared:     <shared modules>
       files:      <source files outside the above>
-  Then STOP. Do not implement until the orchestrator replies GO. It is intersecting your
-  manifest with the other forks' and may reassign a surface or order you behind a peer.
+  Then STOP — this is where your turn ends, and that is correct, not a failure. The orchestrator
+  is intersecting your manifest with the other forks' and may reassign a surface or order you
+  behind a peer. It re-engages you by message for phases 4-5; you resume with full context.
 
-PHASE 4 — IMPLEMENT
-  Run `superpowers:subagent-driven-development` to completion on your plan.
-  OVERRIDE ITS ENDING: SDD finishes by calling `superpowers:finishing-a-development-branch`.
-  Do NOT run it. It opens pull requests and merges, which are forbidden in this whole run.
-  Phase 5 replaces it.
-  You may spawn implementer subagents — that is SDD's mechanism. You may NOT fork another
-  session.
+PHASE 4 — IMPLEMENT (arrives as a message; do not start it in this turn)
+  Work the plan INLINE, task by task. Do NOT invoke `superpowers:subagent-driven-development`
+  and do NOT spawn implementer subagents — your hard rules forbid the Agent tool, so SDD's
+  mechanism cannot run in you. Keep its discipline instead: one task at a time, verification
+  belonging to that task run before it is marked done, and nothing claimed done without reading
+  real output. Never a subagent's word, never "should work now".
+  You may NOT fork another session.
+  OVERRIDE THE SDD ENDING you would otherwise reach for: `finishing-a-development-branch` opens
+  pull requests and merges, forbidden in this whole run. Phase 5 replaces it.
   Send TASK progress only at plan-phase boundaries, not per task. Send BLOCKED <what, and what
-  you tried> the moment SDD cannot resolve something, and WAIT.
+  you tried> the moment you cannot resolve something, and WAIT.
 
   SHARED-SURFACE LOCKS — one database and one deploy runtime are shared by every fork.
   Your worktree isolates git and nothing else. So before the plan's migration or deploy tasks:
@@ -150,6 +165,37 @@ FINAL REPLY — exactly these lines, nothing else:
 
 ---
 
+## § Fork re-engagement
+
+Sent by `SendMessage` once every manifest is in and the fork's surfaces are ruled. This message **is** the `GO` for phases 4–5.
+
+```
+main → <spec-slug>
+
+GO for PHASES 4-5.
+
+SURFACE RULINGS that apply to you (from intersecting all <N> manifests):
+  <one line each: owned / reassigned / ordered behind a peer / merge point>
+
+IMPLEMENT INLINE. No subagent-driven-development, no Agent spawns — your hard rules forbid them,
+and the plan is already codex-hardened. One task at a time, its verification run before it is
+marked done, nothing claimed done without reading real output.
+
+LOCKS STILL BIND inside this turn. Before the plan's migration or deploy tasks:
+  send LOCK migration <files>   → WAIT for my GO → apply → send APPLIED <files>
+  send LOCK deploy <functions>  → WAIT for my GO → deploy + verify → send DEPLOYED <...> VERIFIED <how>
+<state the ordering: who applies before whom, and what you are held behind>
+
+ISOLATION: absolute paths under <ABS_WORKTREE_PATH>, cd-first in every Bash call, and
+`git -C <ABS_WORKTREE_PATH> branch --show-current` checked before every commit.
+
+Then PHASE 5: run the full suite yourself, read the output, push, and send PUSHED + DONE.
+```
+
+Keep it short. The fork revives with its whole transcript — restate only what changed since it stopped.
+
+---
+
 ## § Peer coordination
 
 When the orchestrator sends `COORDINATE WITH <name> ON <surface>`:
@@ -183,5 +229,6 @@ Two unanswered pings → stop pinging. Read `fork-<slug>.md` and that worktree's
 - **Phase 1:** every promised plan file exists and is non-trivial.
 - **Phase 2:** every plan file's content actually changed after APPROVED (or the reviewer approved round 0 with no revisions — confirm, don't assume). `COPIED_BACK: no` → do the copy yourself before granting GO, or that fork implements the un-hardened plan.
 - **Phase 3:** all `N` manifests intersected before the first GO. A GO granted before the last manifest arrived is a collision you chose not to see.
+- **Between 3 and 4:** every fork re-engaged by `SendMessage` (§ Fork re-engagement). A fork that stopped at its manifest is *finished*, not waiting — nobody revives it but you, and a fork you forgot to re-engage looks exactly like a fork that is quietly working.
 - **Phase 4:** exactly one migration lock and one deploy lock outstanding at any moment.
 - **Phase 5:** every branch pushed, every `PARKED` and `CUT` line collected into the ledger — they are the close-out report, and they are invisible to a compacted context.
