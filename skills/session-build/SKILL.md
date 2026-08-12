@@ -64,7 +64,7 @@ This skill runs inside real projects that carry their own rules. Read the projec
 | Branches / worktrees | one | **one per spec** |
 | Plan + codex-review | inline | inside each fork, concurrent |
 | Implementation | inline, via SDD | inline **inside each fork** (no SDD — see below), concurrent across specs, serial within one |
-| Terminal state | 1 pushed branch | N pushed branches |
+| Terminal state | 1 pushed branch | N pushed branches — **a result, not a promise** (they can collapse; see Step 6) |
 
 A fork inherits this session's full conversation context — the whole brainstorm, every spec, every ruling. That is the point: forks already know why their spec exists and what the neighbours are doing. The fork prompt gives **directives**, not a context dump.
 
@@ -214,6 +214,10 @@ The orchestrator writes no code, reviews no diffs line by line, and never implem
 
 **This rule looks like spending a whole session on nothing, and what it actually buys is response time.** Reported from a run that hit a hard deadlock: the orchestrator never had to choose between orchestrating and building, so when a fork jammed it had its entire attention available to diagnose — reading the gate scripts, reading the deploy-set derivation, running the same download twice to settle a disputed claim. Had it been implementing a spec of its own, the jam would have sat untouched until it finished what it was doing. Idle capacity *is* the deliverable here.
 
+**The orchestrator is not exempt from the rules it enforces — and it fails at them in a characteristic way.** Three self-reported errors from one run, each the orchestrator committing the exact mistake it was policing: it instructed a fork to narrow a deploy set in a way the script does not support, **without having read the script first**; it relayed *and amplified* a fork's incorrect claim, nearly writing a false statement into project documentation; and it ran its own pending-lock sweep through `grep … | tail`, where the pipe swallowed the status and "empty directory" became indistinguishable from "no matches" — the very trap it had spent the day warning others about.
+
+The one worth naming: **relaying is amplification.** A claim repeated by the orchestrator acquires an authority it did not earn, because the forks treat it as ruled rather than reported. Verify before repeating, and when you repeat, say whose claim it is and whether you checked it.
+
 **And it independently re-verifies every claim a fork makes.** Not from suspicion — in the observed run all three forks were reliable and the problem was never dishonesty. It is that **each fork sees only its own slice**, so a confident, well-meant report can be locally true and globally wrong. Re-checking is cheap (a query, a grep, one command re-run) and it changed the outcome three separate times: a documentation "fix" that would have deleted a true warning, a deploy scope that was impossible as the orchestrator itself had instructed, and a containment state that had already gone red again. **Re-verify before acting on a fork's claim, especially when the claim is what your next directive depends on.**
 
 **Channel.** Forks report to the orchestrator with `SendMessage to: "main"`. The orchestrator replies by name (from `ListAgents` or the spawn result), appending ` [ref]` only when a listing or an error demands it. Every fork also appends its checkpoints to its own ledger file — that file is the fallback channel if a message is ever lost, and the durable record after compaction.
@@ -321,6 +325,12 @@ Observed and independently confirmed: **load average 54–75 on a 10-core machin
 
 **Outstanding-lock sweep — do this every time you touch the ledger.** A fork waiting on a `GO` is silent *by design*, so the liveness rule above will never catch it. Read every `fork-<slug>.md` for a `LOCK` line with no matching grant, and grant or deny it. This is the one deadlock this design can produce on its own: the request arrives, your context compacts, the request is forgotten, and the fork waits forever while looking perfectly healthy. The ledger is the only record that survives — trust it over what you remember granting. Forks are instructed to re-send an ungranted `LOCK`; a re-send is a symptom that you dropped one, not noise.
 
+**Never accept `DONE` from the report alone — diff the branch against its base.** A fork's words are not evidence about a fork's branch, and the gap is not dishonesty. One reported two tasks built and pushed; the diff showed two files changed and the **four files that were the feature's entire entry point** simply absent. Its own verdict afterwards: *"not a deferral, an incomplete execution."*
+
+This matters because **deferral and omission demand opposite responses** — one becomes a `CUT` with a recorded reason, the other becomes "finish it" — and confusing them produces a close-out that lies in the hardest direction to catch: a `CUT` section that reads like a decision and was actually forgetting. One command prevents it: diff against the merged base and check the plan's files exist. And it deceives most precisely when the fork is **all green**, because green it was — tests passing, lint at ceiling, typecheck clean. None of that knows what was left out.
+
+**Push mechanics the rest of this skill assumes and should not.** Under load a pre-push hook can run for 40+ minutes, and a client timeout is indistinguishable from a rejection — so **push in the background** and stop treating a hung push as a failed one. Then confirm the ref with `git ls-remote`, never with the command's exit code: as one fork put it, *a correct exit code would still only say the command finished, not that the ref arrived.*
+
 **Releases.** When a fork reports `PUSHED`, immediately: create any worktree that was waiting to branch from it, send `GO` to every fork holding on it, and log the release.
 
 **An escalation stops the forks it affects — and only those.** Report to the user with the fork, the finding, and the state of every other fork; then scope the halt to the blast radius:
@@ -346,7 +356,9 @@ Compose from the ledger — never from memory — and print inline, in the user'
 - **Você precisa revisar** — what only a human can check: visual/UX, live e2e, external panel config, anything observable only in production.
 - **Adiado / parked** — every deferred finding from every fork's ledger, with its ruling. **`PARKED` is a draft pendings entry, not a note to self** — it is the only thing that crosses from the fork to whoever closes the branch, and that session cannot re-open the investigation. Ask for it explicitly at dispatch: file and line, the number measured *and how*, the shape of the fix, the exposure left open. A run that asked for exactly that got entries ready to paste; the default, unasked, is "found X, deferred". And require any **single-window proof** to be marked as such — an equivalence established before a migration that now makes the old path raise cannot be re-run, and an unmarked one sends the closing session chasing a break that is not there.
 - **Não feito** — anything cut from a spec, and why.
-- **Próximo passo** — the branches are pushed and verified, awaiting your review. Then `/session-end` per branch, in the merge order above, run in the fork that owns it. This skill does not open PRs and does not merge.
+- **Adiado com documento** — a third category, and neither of the other two. Work that is fully specified and waiting on a precondition: a post-merge runbook naming each object in drop order with a verification query per object is not `CUT` (that would say it was abandoned) and not `PARKED` (that would say it is an idea). Name the precondition, because it is often **the merge itself** — production rebuilds on merge, so the work cannot begin until the user acts.
+- **Aplicado em produção sem merge** — say this whenever a migration was applied before its branch merged, which is this skill's **normal** design, not an exception. One run left four such migrations. If the user never merges, production carries the schema and the repository does not, and nothing will tell them. This is distinct from the abandoned-branch case above: those branches are alive and expected to merge, which is exactly why the warning gets forgotten.
+- **Próximo passo** — the branches are pushed and verified, awaiting your review. **Then `/session-end` — but check how many branches actually carry distinct work before saying "one per branch".** Verify it, do not assume it from the count of specs: `git rev-parse` each branch and test ancestry between them. A run that pushed three branches ended with **two of them at the identical SHA and the third an ancestor of both** — three branches, one deliverable. Telling the user to close each one would have produced two empty pull requests. When they collapse, say *run it once, on this branch*, and name which one. This skill does not open PRs and does not merge.
 
 ## Who the user talks to
 
@@ -419,6 +431,9 @@ The residual risk is honest and small: a hard session death plus another session
 | "The fork is reliable, so I can act on its report" | Reliability is not the issue — each fork sees one slice, so a well-meant report can be locally true and globally wrong. Re-check before acting on it. |
 | "The manifest is paperwork now that codex approved" | Each stage catches a class only it can see. Skipping one does not save time; it chooses not to see its defects. |
 | "The graph gave me the merge order, so the order is understood" | A graph predicts sequence, not entanglement. The same order can arise from containment instead, and then a later review is empty. |
+| "Three branches pushed, so tell them to close three" | Check the SHAs. Two at the same commit and a third that is their ancestor is one deliverable, and three `/session-end` runs would open two empty PRs. |
+| "The fork said DONE and its suite is green" | Green says nothing about what was left out. Diff the branch against its base and look for the plan's files. |
+| "The push exited without error" | Under load a pre-push hook runs for tens of minutes and a timeout looks like a rejection. Confirm the ref with `ls-remote`. |
 | "Worktrees isolate everything" | They isolate git. The database and the deploy runtime stay shared. That is what the locks are for. |
 | "`git worktree add` puts the fork in the worktree" | It does not pin the child session's writes. |
 | "Then the fork calls `EnterWorktree` and it is pinned" | It is refused — first entry from the launch directory does not work in this build, for forks or the orchestrator. Isolation is absolute-path discipline plus a `git -C … branch --show-current` check before every commit. |
