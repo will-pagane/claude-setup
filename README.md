@@ -14,6 +14,7 @@ Publicado pra quem quiser copiar o todo ou pedaços. **Não é framework**: é a
 - [Skills próprias](#skills-próprias)
 - [Hooks](#hooks)
 - [Plugins e ferramentas de terceiro](#plugins-e-ferramentas-de-terceiro)
+- [Conteúdos pra assistir](#conteúdos-pra-assistir)
 - [O que sai da sua máquina](#o-que-sai-da-sua-máquina)
 
 ## Pré-requisitos
@@ -76,6 +77,7 @@ Instalando em outro diretório: `CLAUDE_CONFIG_DIR=/caminho ./install.sh`.
 | `skills/` | Minhas skills próprias — ver [abaixo](#skills-próprias) |
 | `docs/hooks.md` | Os dois hooks deste setup, e como escrever o seu |
 | `docs/cadeia-session.md` | Como as três skills `session-*` se encaixam, com fluxogramas |
+| `docs/conteudos.md` | Vídeos e cursos que mudaram alguma decisão deste setup, com o que pular em cada um |
 | `install.sh` | Instala tudo isso no `~/.claude` |
 
 ## Filosofia (do CLAUDE.md)
@@ -173,6 +175,12 @@ Cada um no seu próprio repo — listo e aponto pro oficial, não vendorizo (o r
 Dentro do Claude Code os comandos são `/plugin ...`; fora dele, o mesmo pelo CLI: `claude plugin marketplace add <repo>` e `claude plugin install <nome>@<marketplace>`. É esse segundo caminho que o `--third-party` usa, porque roda sem TTY.
 
 Os **três plugins** (`superpowers`, `caveman`, `impeccable`) o `--third-party` instala sozinho — são código que roda dentro do Claude Code, e o marketplace de cada um é declarado no `settings.example.json`. **RTK, graphify e codex ele não instala**: são binários no seu sistema, e instalar software na máquina de alguém sem a pessoa mandar não é papel de um instalador de config. Detecta, imprime o comando certo pro seu sistema, e para.
+
+## Conteúdos pra assistir
+
+Ferramenta se instala lendo o `install.sh`; critério não. **[docs/conteudos.md](docs/conteudos.md)** é a lista curta do que assistir pra entender as decisões deste repo — cada item com resumo meu, timestamps do que vale e do que pular, e as ressalvas. Não é uma pasta de links: entra só o que ensina a *operar* um agente (arquivo, cron, isolamento, o que quebra ao escalar), não o que explica o que um agente é.
+
+Começa por **[Hermes Agent: Zero to Personal AI Assistant](docs/conteudos.md#1-hermes-agent-zero-to-personal-ai-assistant)** — o agente que continua rodando depois que você fecha o notebook, e a fronteira dele com o Claude Code.
 
 ## O que sai da sua máquina
 
