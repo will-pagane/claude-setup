@@ -64,4 +64,14 @@ Invoke by judgment, not by gate. Two earn their cost every time:
   on task branch, no `git switch main` (fails outright inside worktree). Use throwaway
   `git init` fixture under `$TMPDIR`
 
+## Optional tool imports
+
+Both lines below describe tools installed separately (see repo README). **If the tool is not
+installed, delete its line** — an import that describes a binary the machine does not have makes
+the agent assume a capability it does not have.
+
 @RTK.md
+
+# graphify
+- **graphify** (`~/.claude/skills/graphify/SKILL.md`) - any input to knowledge graph. Trigger: `/graphify`
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
