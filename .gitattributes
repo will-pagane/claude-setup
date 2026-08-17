@@ -1,0 +1,12 @@
+# install.sh e os .mjs sao executados, nao so lidos: um checkout que os entregue
+# com CRLF quebra o shebang em macOS/Linux. O core.autocrlf=true do Windows ja
+# normaliza na entrada, mas isso e config de maquina — um contribuidor sem ela
+# comita CRLF e quebra para todo mundo. Aqui a regra fica no repo.
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+
+# PowerShell e o unico que prefere CRLF, e so roda no Windows mesmo.
+*.ps1  text eol=crlf
+
+*.png  binary
