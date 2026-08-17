@@ -7,6 +7,7 @@ Isso é minha config pessoal de Claude Code, publicada pra quem quiser copiar id
 - Quebra de portabilidade — algo que funciona no meu macOS/Windows e não no seu sistema
 - Typo ou informação desatualizada no README/CLAUDE.md/docs
 - Link morto ou comando de instalação errado
+- Conteúdo pra `docs/conteudos.md` que passe no critério de lá — e escrito no formato de lá, com resumo seu e ressalvas, não a descrição do autor colada
 
 **Provavelmente não vou aceitar:**
 - Feature nova no statusline pra caso de uso que não é o meu
