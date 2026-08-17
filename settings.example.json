@@ -1,42 +1,65 @@
 {
-  "$comment": "Trecho representativo do meu ~/.claude/settings.json (nivel user). Ajustei os caminhos e removi permissoes especificas de projetos privados — nao copie o allowlist as cegas, revise pro seu proprio fluxo.",
-  "model": "sonnet",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rtk hook claude"
-          }
-        ]
-      }
-    ]
-  },
+  "$comment": "Trecho representativo do meu ~/.claude/settings.json (nivel user). Nao copie inteiro: 'language', 'effortLevel' e 'model' sao preferencia minha. O que importa aqui e statusLine (sem refreshInterval a linha 3 nao roda) e o formato dos hooks. Ver docs/hooks.md.",
+
   "statusLine": {
     "type": "command",
     "command": "node \"$HOME/.claude/statusline/statusline.mjs\"",
     "refreshInterval": 10
   },
+
+  "$comment_hooks": "O hook do RTK e escrito por 'rtk init --global' — nao cole a mao, deixe o proprio rtk gerenciar. Esta aqui so pra voce reconhecer o que ele adiciona. Sem o binario 'rtk' no PATH, este hook falha em todo Bash: instale o rtk antes ou remova o bloco.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "rtk hook claude" }]
+      }
+    ],
+
+    "$comment_SessionStart": "Opcional, so Windows: mata arvore de processo orfa de test runner (vitest/jest/playwright) que sobrevive ao fim da sessao. Script em hooks/reap-orphans.ps1, instalado em ~/.claude/scripts/. Rode com -WhatIf antes de ligar.",
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "C:\\Users\\SEU-USUARIO\\.claude\\scripts\\reap-orphans.ps1"
+            ],
+            "async": true,
+            "timeout": 30,
+            "statusMessage": "Limpando processos orfaos..."
+          }
+        ]
+      }
+    ]
+  },
+
+  "$comment_plugins": "superpowers vem do marketplace oficial, que ja e conhecido — so caveman e impeccable precisam ser declarados em extraKnownMarketplaces. './install.sh --third-party' faz os tres por CLI.",
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
-    "caveman@caveman": true
+    "caveman@caveman": true,
+    "impeccable@impeccable": true
   },
   "extraKnownMarketplaces": {
-    "impeccable": {
-      "source": { "source": "github", "repo": "pbakaus/impeccable" }
-    },
     "caveman": {
       "source": { "source": "github", "repo": "JuliusBrussee/caveman" }
+    },
+    "impeccable": {
+      "source": { "source": "github", "repo": "pbakaus/impeccable" }
     }
   },
-  "language": "Brazillian Portuguese",
-  "effortLevel": "xhigh",
-  "advisorModel": "opus",
+
+  "$comment_prefs": "Daqui pra baixo e gosto pessoal, nao requisito do setup.",
+  "model": "opus[1m]",
+  "language": "Brazilian Portuguese",
+  "effortLevel": "high",
+  "alwaysThinkingEnabled": true,
   "theme": "dark",
-  "editorMode": "normal",
   "preferredNotifChannel": "terminal_bell",
-  "autoCompactEnabled": true,
-  "terminalProgressBarEnabled": true
+  "autoCompactEnabled": true
 }
