@@ -36,3 +36,100 @@ jobs:
             echo "checking $f"
             bash -n "$f"
           done
+
+      - name: hooks/**/*.ps1 parse
+        shell: pwsh
+        run: |
+          Get-ChildItem hooks -Filter *.ps1 -Recurse | ForEach-Object {
+            Write-Output "checking $($_.FullName)"
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
+
+  install-smoke:
+    # Sintaxe valida nao prova que instalou: o bug que motivou este job era um
+    # install.sh que rodava limpo e deixava o ~/.claude pela metade.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: dry-run nao escreve nada
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/dry"
+          ./install.sh --dry-run
+          if [ -d "$CLAUDE_CONFIG_DIR" ] && [ -n "$(ls -A "$CLAUDE_CONFIG_DIR" 2>/dev/null)" ]; then
+            echo "FALHOU: --dry-run escreveu em $CLAUDE_CONFIG_DIR"; exit 1
+          fi
+
+      - name: argumento desconhecido falha em vez de instalar
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/badarg"
+          if ./install.sh --skils >/dev/null 2>&1; then
+            echo "FALHOU: argumento invalido foi aceito"; exit 1
+          fi
+
+      - name: instala e todo alvo existe
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/home"
+          ./install.sh
+          for f in CLAUDE.md RTK.md statusline/statusline.mjs scripts/reap-orphans.ps1; do
+            test -e "$CLAUDE_CONFIG_DIR/$f" || { echo "FALTOU $f"; exit 1; }
+          done
+          for d in skills/*/; do
+            name="$(basename "$d")"
+            test -e "$CLAUDE_CONFIG_DIR/skills/$name" || { echo "FALTOU skill $name"; exit 1; }
+          done
+          # Onde symlink funciona (Linux), tem que ser symlink de verdade.
+          test -L "$CLAUDE_CONFIG_DIR/CLAUDE.md" || { echo "esperava symlink"; exit 1; }
+
+      - name: reinstalar re-sincroniza em vez de virar no-op
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/copy"
+          ./install.sh --copy
+          echo "DIVERGENCIA" >> "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+          ./install.sh --copy
+          if grep -q DIVERGENCIA "$CLAUDE_CONFIG_DIR/CLAUDE.md"; then
+            echo "FALHOU: segunda execucao nao re-sincronizou"; exit 1
+          fi
+
+      - name: arquivo do usuario e preservado sem --force
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/mine"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          echo "meu proprio" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+          ./install.sh
+          grep -q "meu proprio" "$CLAUDE_CONFIG_DIR/CLAUDE.md" || { echo "FALHOU: sobrescreveu arquivo do usuario"; exit 1; }
+          ./install.sh --force
+          grep -q "meu proprio" "$CLAUDE_CONFIG_DIR/CLAUDE.md.bak" || { echo "FALHOU: --force nao guardou backup"; exit 1; }
+
+      - name: --settings preserva o resto do settings.json
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/settings"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          echo '{"model":"opus","permissions":{"allow":["Bash(git status*)"]}}' > "$CLAUDE_CONFIG_DIR/settings.json"
+          ./install.sh --settings
+          node -e '
+            const j = JSON.parse(require("fs").readFileSync(process.env.CLAUDE_CONFIG_DIR + "/settings.json","utf8"));
+            if (j.model !== "opus") throw new Error("perdeu model");
+            if (!j.permissions?.allow?.length) throw new Error("perdeu permissions");
+            if (!j.statusLine?.command) throw new Error("nao escreveu statusLine");
+          '
+
+      - name: --uninstall remove so o que instalou
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/uninst"
+          ./install.sh
+          echo "nao me apague" > "$CLAUDE_CONFIG_DIR/MEU.md"
+          ./install.sh --uninstall
+          test -e "$CLAUDE_CONFIG_DIR/MEU.md" || { echo "FALHOU: apagou arquivo alheio"; exit 1; }
+          test ! -e "$CLAUDE_CONFIG_DIR/CLAUDE.md" || { echo "FALHOU: nao removeu o que instalou"; exit 1; }
+
+      - name: statusline roda e nao quebra com stdin vazio
+        run: |
+          echo '{}' | node statusline/statusline.mjs > /dev/null
+          printf '' | node statusline/statusline.mjs > /dev/null
